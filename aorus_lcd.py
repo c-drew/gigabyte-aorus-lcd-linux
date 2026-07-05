@@ -111,3 +111,58 @@ def build_upload(pdata, fb_addr, flag=1, nframes=0, delay=0, mode=None):
     header = make_f1_header(fb_addr, len(pdata) // 256 + 1, nframes, delay,
                             len(pdata), flag=flag, mode=mode)
     return [f2_frame(1), header] + chunk_payload(pdata) + [f2_frame(2)]
+
+
+# ---- pixel encoders (need Pillow) ----------------------------------------------
+
+def image_to_le565(im):
+    """PIL RGB image already sized (W, H) -> little-endian RGB565 bytes."""
+    out = bytearray(FRAME_BYTES)
+    i = 0
+    for (r, g, b) in im.getdata():
+        v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+        out[i] = v & 0xFF
+        out[i + 1] = (v >> 8) & 0xFF
+        i += 2
+    return bytes(out)
+
+
+def load_image_le565(path):
+    """Load any image file -> 320x170 LE-RGB565 (LANCZOS resize)."""
+    from PIL import Image
+    return image_to_le565(Image.open(path).convert("RGB").resize((W, H), Image.LANCZOS))
+
+
+def render_text_le565(text, size=28, fg=(139, 141, 139), bg=(0, 0, 0)):
+    """Render `text` centered on a 320x170 canvas -> LE-RGB565. Defaults match
+    GCC's own text upload: black background, ~#8b8d8b gray text (the panel's
+    rainbow effect uses the gray as a luminance mask)."""
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.new("RGB", (W, H), bg)
+    d = ImageDraw.Draw(im)
+    font = None
+    for name in ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
+        try:
+            font = ImageFont.truetype(name, size)
+            break
+        except Exception:
+            pass
+    if font is None:
+        font = ImageFont.load_default()
+    bb = d.textbbox((0, 0), text, font=font)
+    tw, th = bb[2] - bb[0], bb[3] - bb[1]
+    d.text(((W - tw) / 2, (H - th) / 2), text, font=font, fill=fg)
+    return image_to_le565(im)
+
+
+def gif_to_le565_frames(path):
+    """Decode an animated gif -> (list of LE-RGB565 frames, per-frame delays ms)."""
+    from PIL import Image
+    im = Image.open(path)
+    frames, delays = [], []
+    for i in range(getattr(im, "n_frames", 1)):
+        im.seek(i)
+        fr = im.convert("RGB").resize((W, H), Image.LANCZOS)
+        frames.append(image_to_le565(fr))
+        delays.append(im.info.get("duration", 100))
+    return frames, delays

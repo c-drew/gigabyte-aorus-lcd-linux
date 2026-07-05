@@ -77,3 +77,60 @@ def test_build_upload_shape():
     assert frames[-1][:6] == F2 + b"\x02"
     assert len(frames) == 2 + (len(p) // 256 + 1) + 1
     assert int.from_bytes(frames[1][10:14], "big") == len(p) // 256 + 1
+
+
+def _solid_image(rgb):
+    from PIL import Image
+    return Image.new("RGB", (A.W, A.H), rgb)
+
+
+def test_image_to_le565_known_pixels():
+    # pure red: RGB565 0xF800 -> LE bytes 00 F8
+    red = A.image_to_le565(_solid_image((255, 0, 0)))
+    assert len(red) == A.FRAME_BYTES
+    assert red[:2] == b"\x00\xf8" and red == red[:2] * A.FRAME_PIXELS
+    # pure green: 0x07E0 -> E0 07 ; pure blue: 0x001F -> 1F 00
+    assert A.image_to_le565(_solid_image((0, 255, 0)))[:2] == b"\xe0\x07"
+    assert A.image_to_le565(_solid_image((0, 0, 255)))[:2] == b"\x1f\x00"
+    # low bits are truncated, not rounded: (7,3,7) -> 0
+    assert A.image_to_le565(_solid_image((7, 3, 7)))[:2] == b"\x00\x00"
+
+
+def test_load_image_le565_resizes(tmp_path):
+    from PIL import Image
+    p = tmp_path / "in.png"
+    Image.new("RGB", (64, 64), (255, 255, 255)).save(p)
+    out = A.load_image_le565(str(p))
+    assert len(out) == A.FRAME_BYTES
+    assert out[:2] == b"\xff\xff"
+
+
+def test_render_text_le565():
+    out = A.render_text_le565("HELLO", size=28, fg=(255, 255, 255), bg=(0, 0, 0))
+    assert len(out) == A.FRAME_BYTES
+    assert b"\xff\xff" in out, "some white text pixels"
+    assert out[:2] == b"\x00\x00", "corner stays background"
+
+
+def _write_test_gif(path, nframes=7):
+    """Synthetic 320x170 animated gif: moving block over changing background."""
+    from PIL import Image
+    frames = []
+    for i in range(nframes):
+        im = Image.new("RGB", (A.W, A.H), (12 * i, 0, 120))
+        for x in range(48):
+            for y in range(48):
+                im.putpixel(((i * 41 + x) % A.W, (40 + y) % A.H),
+                            (255, 255 - 30 * i, 33 * i % 256))
+        frames.append(im)
+    frames[0].save(path, save_all=True, append_images=frames[1:],
+                   duration=50, loop=0)
+
+
+def test_gif_to_le565_frames(tmp_path):
+    p = str(tmp_path / "t.gif")
+    _write_test_gif(p)
+    frames, delays = A.gif_to_le565_frames(p)
+    assert len(frames) == len(delays) == 7
+    assert all(len(f) == A.FRAME_BYTES for f in frames)
+    assert delays == [50] * 7
