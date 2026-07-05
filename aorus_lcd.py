@@ -402,3 +402,270 @@ def upload_content(bus, frames, mode, is_gif, set_display_mode=True,
     send_upload(bus, frames, chunk_delay)
     if not is_gif and set_display_mode:
         set_mode(bus, mode)
+
+
+# ---- selftest (pure functions, no hardware, no Pillow) ------------------------------
+
+def run_selftest():
+    """Quick self-check of the protocol encoders. Returns the failure count."""
+    def px(*words):
+        return b"".join(w.to_bytes(2, "little") for w in words)
+
+    checks = [
+        ("cmd_frame", lambda: cmd_frame(0xE5, b"\x04")[:6] == bytes([0xE5]) + MAGIC + b"\x04"),
+        ("f2_begin", lambda: f2_frame(1)[:6] == bytes([0xF2]) + MAGIC + b"\x01"),
+        ("f1_fields", lambda: (lambda h: h[5:9] == b"\x01\x30\x00\x00"
+                               and int.from_bytes(h[10:14], "big") == 426
+                               and h[16] == 0 and h[17] == 2)
+                              (make_f1_header(FB_STATIC, 426, 0, 0, DESC_LEN + FRAME_BYTES))),
+        ("f1_delay_clamp", lambda: make_f1_header(FB_GIF, 1, 1, 999, 100, flag=2, mode=2)[16] == 255),
+        ("chunk_pad", lambda: len(chunk_payload(b"x" * 512)) == 3
+                              and chunk_payload(b"x" * 512)[2] == bytes(256)),
+        ("rle_run", lambda: rle_encode_frame(px(*[0x1234] * 6)) == b"\x06\x80" + px(0x1234)),
+        ("rle_literal", lambda: rle_encode_frame(px(1, 2, 1, 2, 1, 2)) == b"\x06\x00" + px(1, 2, 1, 2, 1, 2)),
+        ("rle_short_tail", lambda: rle_encode_frame(px(7, 7, 7)) == b"\x03\x00" + px(7, 7, 7)),
+        ("gif_table", lambda: gif_frame_table([10, 20])
+                              == b"\x02\x00"
+                              + (31).to_bytes(4, "little") + px(W, H, 3)
+                              + (51).to_bytes(4, "little") + px(W, H, 3)),
+    ]
+    failed = 0
+    for name, fn in checks:
+        try:
+            ok = fn()
+        except Exception as e:
+            ok = False
+            name += f" ({e.__class__.__name__}: {e})"
+        print(f"{'PASS' if ok else 'FAIL'}  {name}")
+        failed += 0 if ok else 1
+    print(f"\n{len(checks) - failed}/{len(checks)} passed")
+    return failed
+
+
+# ---- CLI ----------------------------------------------------------------------------
+
+def parse_hex_bytes(s):
+    return bytes(int(x, 16) for x in s.replace(",", " ").split())
+
+
+def parse_color(s):
+    s = s.lstrip("#")
+    return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _experimental(what):
+    print(f"note: '{what}' is EXPERIMENTAL — semantics inferred from the decompile, "
+          "not fully hardware-confirmed.")
+
+
+def _open_bus(args):
+    if SMBus is None:
+        sys.exit("smbus2 not installed:  pip install smbus2")
+    return SMBus(resolve_bus(args.bus))
+
+
+def cli_probe(args):
+    if SMBus is None:
+        sys.exit("smbus2 not installed:  pip install smbus2")
+    if args.bus is not None:
+        ok, detail = probe(args.bus)
+        print(f"/dev/i2c-{args.bus} @0x61: {detail}")
+        sys.exit(0 if ok else 1)
+    n = find_nvidia_bus()
+    if n is None:
+        seen = "\n".join(f"  /dev/i2c-{k}: {v}" for k, v in list_adapters()) \
+               or "  (none — is i2c-dev loaded? sudo modprobe i2c-dev)"
+        print(f"no NVIDIA internal bus found. Adapters seen:\n{seen}")
+        sys.exit(1)
+    ok, detail = probe(n)
+    print(f"/dev/i2c-{n} (NVIDIA internal bus) @0x61: {detail}")
+    sys.exit(0 if ok else 1)
+
+
+def cli_on(args):
+    with _open_bus(args) as bus:
+        open_lcd(bus, True)
+    print("panel ON (E7 01)")
+
+
+def cli_off(args):
+    with _open_bus(args) as bus:
+        open_lcd(bus, False)
+    print("panel OFF (E7 02)")
+
+
+def cli_mode(args):
+    with _open_bus(args) as bus:
+        set_mode(bus, args.mode)
+    print(f"SetMode {args.mode}")
+
+
+def cli_image(args):
+    pixels = load_image_le565(args.file)
+    frames = build_upload(DESC + pixels, FB_STATIC)
+    print(f"uploading {args.file} ({len(frames)} i2c writes) ...")
+    with _open_bus(args) as bus:
+        upload_content(bus, frames, MODE_STATIC, is_gif=False,
+                       set_display_mode=not args.no_mode, chunk_delay=args.chunk_delay)
+    print("done" + ("" if args.no_mode else " (SetMode 3)"))
+
+
+def cli_text(args):
+    pixels = render_text_le565(args.text, size=args.size,
+                               fg=parse_color(args.color), bg=parse_color(args.bg))
+    frames = build_upload(DESC + pixels, FB_TEXT)
+    print(f'uploading text "{args.text}" ({len(frames)} i2c writes) ...')
+    with _open_bus(args) as bus:
+        upload_content(bus, frames, MODE_TEXT, is_gif=False,
+                       set_display_mode=not args.no_mode, chunk_delay=args.chunk_delay)
+        if not args.no_mode and not args.no_effect:
+            write_frame(bus, cmd_frame(OP_TEXTFX))   # panel rainbow/LED effect
+            print("text effect applied (AA)")
+    print("done")
+
+
+def cli_gif(args):
+    frames, n = build_gif_frames(args.file, args.frame_delay)
+    print(f"uploading {args.file}: {n} frames, {len(frames)} i2c writes ...")
+    with _open_bus(args) as bus:
+        upload_content(bus, frames, MODE_GIF, is_gif=True,
+                       set_display_mode=not args.no_mode, chunk_delay=args.chunk_delay)
+    print("done")
+
+
+def cli_carousel(args):
+    modes = [int(x) for x in args.modes.split(",") if x.strip()]
+    bad = [m for m in modes if not 0 <= m <= 6]
+    if bad:
+        sys.exit(f"carousel modes must be 0..6, got {bad}")
+    with _open_bus(args) as bus:
+        set_carousel(bus, modes, args.arg)
+    print(f"carousel {modes} arg={args.arg} (F3)")
+
+
+def cli_brightness(args):
+    _experimental("brightness")
+    with _open_bus(args) as bus:
+        set_brightness(bus, args.value)
+    print(f"SetDisplay brightness {args.value} (E1)")
+
+
+def cli_poweroff_mode(args):
+    _experimental("poweroff-mode")
+    with _open_bus(args) as bus:
+        power_off_mode(bus)
+    print("SetPCPowerOffMode (FA)")
+
+
+def cli_raw(args):
+    _experimental("raw")
+    b = parse_hex_bytes(args.hexbytes)
+    with _open_bus(args) as bus:
+        write_frame(bus, cmd_frame(b[0], bytes(b[1:])))
+    print(f"sent {b[0]:#04x} params {bytes(b[1:]).hex(' ') or '(none)'}")
+
+
+def cli_raw_read(args):
+    _experimental("raw-read")
+    b = parse_hex_bytes(args.hexbytes)
+    with _open_bus(args) as bus:
+        r = read_cmd(bus, b[0], bytes(b[1:]), args.len)
+    print(f"read {b[0]:#04x} {bytes(b[1:]).hex(' ')} -> {r.hex(' ')}")
+
+
+def cli_selftest(args):
+    sys.exit(1 if run_selftest() else 0)
+
+
+def build_parser():
+    ap = argparse.ArgumentParser(
+        prog="aorus_lcd.py",
+        description="Control the Aorus Master RTX 5090 'LCD Edge View' from Linux "
+                    "(legacy 0x61 protocol).")
+    ap.add_argument("--bus", type=int, default=None, metavar="N",
+                    help="/dev/i2c-N to use (default: autodetect the NVIDIA bus by name)")
+    sub = ap.add_subparsers(dest="command", metavar="COMMAND")
+
+    sub.add_parser("probe", help="find the NVIDIA bus and check the LCD controller ACKs") \
+       .set_defaults(func=cli_probe)
+    sub.add_parser("on", help="turn the panel on").set_defaults(func=cli_on)
+    sub.add_parser("off", help="turn the panel off").set_defaults(func=cli_off)
+
+    p = sub.add_parser("mode", help="select display mode 0..7 (3=image, 4=text, 5=gif, 6=chibi)")
+    p.add_argument("mode", type=int, choices=range(0, 8))
+    p.set_defaults(func=cli_mode)
+
+    def add_upload_opts(p):
+        p.add_argument("--no-mode", action="store_true",
+                       help="upload only; skip the display-mode switch")
+        p.add_argument("--chunk-delay", type=float, default=PACE_CHUNK, metavar="SEC",
+                       help=f"delay between 256-byte chunks (default {PACE_CHUNK})")
+
+    p = sub.add_parser("image", help="show a static image (resized to 320x170)")
+    p.add_argument("file", help="image file (png/jpg/anything Pillow opens)")
+    add_upload_opts(p)
+    p.set_defaults(func=cli_image)
+
+    p = sub.add_parser("text", help="render and show a text message")
+    p.add_argument("text")
+    p.add_argument("--size", type=int, default=28, help="font size (default 28)")
+    p.add_argument("--color", default="8b8d8b",
+                   help="text color RRGGBB (default 8b8d8b — GCC's gray, needed "
+                        "for the rainbow effect)")
+    p.add_argument("--bg", default="000000", help="background RRGGBB (default black)")
+    p.add_argument("--no-effect", action="store_true",
+                   help="skip the panel's rainbow effect (AA) after upload")
+    add_upload_opts(p)
+    p.set_defaults(func=cli_text)
+
+    p = sub.add_parser("gif", help="play an animated gif (RLE-compressed upload)")
+    p.add_argument("file")
+    p.add_argument("--frame-delay", type=int, default=None, metavar="MS",
+                   help="per-frame delay override in ms (default: from the gif)")
+    add_upload_opts(p)
+    p.set_defaults(func=cli_gif)
+
+    p = sub.add_parser("carousel", help="cycle built-in modes, e.g. 0,1,4")
+    p.add_argument("modes", help="comma-separated mode list (each 0..6)")
+    p.add_argument("--arg", type=int, default=0, help="F3 byte5 param (likely interval)")
+    p.set_defaults(func=cli_carousel)
+
+    p = sub.add_parser("brightness", help="[experimental] set display brightness (E1)")
+    p.add_argument("value", type=int)
+    p.set_defaults(func=cli_brightness)
+
+    sub.add_parser("poweroff-mode", help="[experimental] SetPCPowerOffMode (FA)") \
+       .set_defaults(func=cli_poweroff_mode)
+
+    p = sub.add_parser("raw", help='[experimental] send a raw command frame, e.g. "aa 01 02"')
+    p.add_argument("hexbytes", help="opcode + params as hex bytes")
+    p.set_defaults(func=cli_raw)
+
+    p = sub.add_parser("raw-read", help='[experimental] send a command frame then read back, e.g. "eb 03"')
+    p.add_argument("hexbytes")
+    p.add_argument("--len", type=int, default=8, help="bytes to read back (default 8)")
+    p.set_defaults(func=cli_raw_read)
+
+    sub.add_parser("selftest", help="run the built-in encoder self-checks (no hardware)") \
+       .set_defaults(func=cli_selftest)
+    return ap
+
+
+def main(argv=None):
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    if not hasattr(args, "func"):
+        ap.print_help()
+        sys.exit(2)
+    try:
+        args.func(args)
+    except ImportError as e:
+        sys.exit(f"missing dependency: {e.name} (pip install Pillow)"
+                 if e.name == "PIL" else str(e))
+    except PermissionError:
+        sys.exit("permission denied opening the i2c device — run as root or add "
+                 "yourself to the 'i2c' group.")
+
+
+if __name__ == "__main__":
+    main()

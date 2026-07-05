@@ -387,3 +387,45 @@ def test_upload_content_mode_ordering(monkeypatch):
     bus = FakeBus()
     A.upload_content(bus, frames, A.MODE_STATIC, is_gif=False, set_display_mode=False)
     assert bus.writes == frames
+
+
+# ---- CLI wiring / selftest --------------------------------------------------------
+
+def test_selftest_passes():
+    assert A.run_selftest() == 0
+
+
+def test_parser_wiring():
+    p = A.build_parser()
+    a = p.parse_args(["mode", "3"])
+    assert a.func is A.cli_mode and a.mode == 3 and a.bus is None
+    a = p.parse_args(["--bus", "2", "image", "x.png"])
+    assert a.func is A.cli_image and a.bus == 2 and a.file == "x.png"
+    a = p.parse_args(["text", "hi", "--size", "40", "--color", "ff0000",
+                      "--bg", "000000", "--no-effect"])
+    assert a.func is A.cli_text and a.size == 40 and a.no_effect
+    a = p.parse_args(["gif", "x.gif", "--frame-delay", "80", "--no-mode"])
+    assert a.func is A.cli_gif and a.frame_delay == 80 and a.no_mode
+    a = p.parse_args(["carousel", "0,1,4", "--arg", "2"])
+    assert a.func is A.cli_carousel and a.modes == "0,1,4" and a.arg == 2
+    a = p.parse_args(["raw", "aa 01 02"])
+    assert a.func is A.cli_raw and a.hexbytes == "aa 01 02"
+    a = p.parse_args(["raw-read", "eb 03", "--len", "16"])
+    assert a.func is A.cli_raw_read and a.len == 16
+    for name, fn in [("probe", A.cli_probe), ("on", A.cli_on), ("off", A.cli_off),
+                     ("brightness", None), ("poweroff-mode", A.cli_poweroff_mode),
+                     ("selftest", A.cli_selftest)]:
+        argv = [name] if name not in ("brightness",) else [name, "128"]
+        a = p.parse_args(argv)
+        if fn:
+            assert a.func is fn
+
+
+def test_parse_hex_bytes():
+    assert A.parse_hex_bytes("aa 01 02") == bytes([0xAA, 0x01, 0x02])
+    assert A.parse_hex_bytes("eb,03") == bytes([0xEB, 0x03])
+
+
+def test_parse_color():
+    assert A.parse_color("ff8000") == (255, 128, 0)
+    assert A.parse_color("#ff8000") == (255, 128, 0)
