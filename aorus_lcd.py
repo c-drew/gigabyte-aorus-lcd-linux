@@ -251,3 +251,154 @@ def build_gif_frames(gif_path, delay=None):
     """Animated-gif upload frame list (fb 0x00000000, flag 2) + frame count."""
     payload, n, d = build_gif_payload(gif_path, delay)
     return build_upload(payload, FB_GIF, flag=2, nframes=n, delay=d, mode=2), n
+
+
+# ---- bus discovery ---------------------------------------------------------------
+
+SYS_I2C_DEV = "/sys/class/i2c-dev"
+NVIDIA_BUS_PREFIX = "NVIDIA i2c adapter 1 at"   # the internal controller bus (LCD @0x61)
+
+
+def list_adapters(sys_root=SYS_I2C_DEV):
+    """[(bus_number, adapter_name), ...] from sysfs, sorted by bus number."""
+    out = []
+    for path in glob.glob(os.path.join(sys_root, "i2c-*")):
+        try:
+            with open(os.path.join(path, "name")) as f:
+                name = f.read().strip()
+        except OSError:
+            continue
+        out.append((int(path.rsplit("-", 1)[1]), name))
+    return sorted(out)
+
+
+def find_nvidia_bus(sys_root=SYS_I2C_DEV):
+    """Bus number of the NVIDIA internal controller bus, or None. Matching by
+    NAME (not /dev/i2c-N position) so a module-load reorder can't point us at a
+    chipset SMBus."""
+    for n, name in list_adapters(sys_root):
+        if name.startswith(NVIDIA_BUS_PREFIX):
+            return n
+    return None
+
+
+def probe(bus_n):
+    """Low-risk presence check: a 0-length write (SMBus quick) to 0x61.
+    ACK => controller present. (0x61 is not a monitor DDC address.)"""
+    try:
+        with SMBus(bus_n) as bus:
+            bus.i2c_rdwr(i2c_msg.write(ADDR, b""))
+        return True, "ACK (device present at 0x61)"
+    except FileNotFoundError:
+        return False, "bus not present (is i2c-dev loaded? sudo modprobe i2c-dev)"
+    except PermissionError:
+        return False, "permission denied (run as root, or add yourself to the 'i2c' group)"
+    except OSError as e:
+        return False, f"no ACK ({e})"
+
+
+def resolve_bus(bus_arg):
+    """Return a bus number verified to ACK at 0x61, or exit with a clear error.
+    With bus_arg=None, autodetect the NVIDIA bus by adapter name."""
+    if bus_arg is not None:
+        ok, detail = probe(bus_arg)
+        if not ok:
+            sys.exit(f"/dev/i2c-{bus_arg} @0x61: {detail}")
+        return bus_arg
+    n = find_nvidia_bus()
+    if n is None:
+        seen = "\n".join(f"  /dev/i2c-{k}: {v}" for k, v in list_adapters()) \
+               or "  (none — is i2c-dev loaded? sudo modprobe i2c-dev)"
+        sys.exit("could not find the NVIDIA internal i2c bus "
+                 f'(adapter name starting "{NVIDIA_BUS_PREFIX}").\n'
+                 f"Adapters seen:\n{seen}\n"
+                 "If your card exposes a different name, pass --bus N explicitly.")
+    ok, detail = probe(n)
+    if not ok:
+        sys.exit(f"found NVIDIA bus /dev/i2c-{n} but: {detail}")
+    print(f"using /dev/i2c-{n} (autodetected NVIDIA internal bus)")
+    return n
+
+
+# ---- hardware I/O ----------------------------------------------------------------
+
+def write_frame(bus, data):
+    """One raw I2C write of `data` to 0x61 (matches GCC's GvWriteI2C block write)."""
+    bus.i2c_rdwr(i2c_msg.write(ADDR, bytes(data)))
+
+
+def read_cmd(bus, opcode, tail=b"\x03", nbytes=8):
+    """Write a command frame, then read `nbytes` back from 0x61 (GvReadI2C
+    pattern, e.g. EB 03 / ED 03 status queries)."""
+    write_frame(bus, cmd_frame(opcode, tail))
+    msg = i2c_msg.read(ADDR, nbytes)
+    bus.i2c_rdwr(msg)
+    return bytes(msg)
+
+
+# ---- panel commands ----------------------------------------------------------------
+
+def open_lcd(bus, on):
+    write_frame(bus, cmd_frame(OP_OPENLCD, bytes([1 if on else 2])))
+
+
+def set_mode(bus, m):
+    """E5 SetMode: byte5 = mode+1. Modes 0..6 confirmed on hardware
+    (3 = static image, 4 = text, 5 = gif, 6 = chibi); mode 7 maps to 9 (GCC quirk)."""
+    write_frame(bus, cmd_frame(OP_SETMODE, bytes([(9 if m == 7 else m) + 1])))
+
+
+def set_brightness(bus, value, mask=0xFF):
+    """E1 SetDisplay: byte5..12 = 1 per set bit of `mask`, byte13 = value.
+    EXPERIMENTAL: element-mask semantics inferred from the decompile, not
+    hardware-confirmed."""
+    tail = bytearray(9)
+    for i in range(8):
+        if mask & (1 << i):
+            tail[i] = 1
+    tail[8] = value & 0xFF
+    write_frame(bus, cmd_frame(OP_SETDISP, bytes(tail)))
+
+
+def set_carousel(bus, modes, arg=0):
+    """F3 SetLoop: cycle built-in modes. byte5 = arg (interval/param),
+    byte6.. = (mode+1) in play order. Modes must be 0..6."""
+    tail = bytearray([arg & 0xFF])
+    for m in modes:
+        if 0 <= m <= 6:
+            tail.append((m & 0xFF) + 1)
+    write_frame(bus, cmd_frame(OP_SETLOOP, bytes(tail)))
+
+
+def power_off_mode(bus):
+    write_frame(bus, cmd_frame(OP_POWEROFF))
+
+
+# ---- upload sequencing --------------------------------------------------------------
+
+def send_upload(bus, frames, chunk_delay=PACE_CHUNK):
+    """Write the upload frames with the pacing the panel firmware needs:
+    0.5 s after BEGIN, 1.0 s after the F1 header, ~10 ms between chunks."""
+    for fr in frames:
+        write_frame(bus, fr)
+        if fr[0] == 0xF2 and fr[5] == 0x01:
+            time.sleep(PACE_BEGIN)
+        elif fr[0] == 0xF1:
+            time.sleep(PACE_HEADER)
+        else:
+            time.sleep(chunk_delay)
+
+
+def upload_content(bus, frames, mode, is_gif, set_display_mode=True,
+                   chunk_delay=PACE_CHUNK):
+    """Stream an upload and select its display mode. ORDER MATTERS: a gif
+    streams to framebuffer 0 — a live buffer — so the panel must already be in
+    gif mode and listening as frames arrive (SetMode BEFORE; switching after
+    shows black). Image/text store to numbered framebuffers, so their SetMode
+    goes AFTER the upload (the capture-confirmed sequence)."""
+    if is_gif and set_display_mode:
+        set_mode(bus, mode)
+        time.sleep(0.2)
+    send_upload(bus, frames, chunk_delay)
+    if not is_gif and set_display_mode:
+        set_mode(bus, mode)

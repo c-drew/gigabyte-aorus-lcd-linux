@@ -294,3 +294,96 @@ def test_encoder_matches_gcc_ground_truth():
         blob = anim[off:off + s]
         off += s
         assert A.rle_encode_frame(_rle_decode(blob)) == blob, f"frame {i} re-encode"
+
+
+# ---- bus discovery / command layer (no hardware: fake sysfs + fake bus) ---------
+
+def _fake_sysfs(tmp_path, names):
+    root = tmp_path / "i2c-dev"
+    for n, name in names.items():
+        d = root / f"i2c-{n}"
+        d.mkdir(parents=True)
+        (d / "name").write_text(name + "\n")
+    return str(root)
+
+
+def test_find_nvidia_bus(tmp_path):
+    root = _fake_sysfs(tmp_path, {
+        0: "SMBus PIIX4 adapter port 0 at 0b00",
+        3: "NVIDIA i2c adapter 1 at 1:00.0",
+        4: "NVIDIA i2c adapter 6 at 1:00.0",
+    })
+    assert A.find_nvidia_bus(sys_root=root) == 3
+    assert A.list_adapters(sys_root=root)[0] == (0, "SMBus PIIX4 adapter port 0 at 0b00")
+
+
+def test_find_nvidia_bus_absent(tmp_path):
+    root = _fake_sysfs(tmp_path, {0: "SMBus PIIX4 adapter port 0 at 0b00"})
+    assert A.find_nvidia_bus(sys_root=root) is None
+
+
+class FakeBus:
+    """Records every i2c write as raw bytes."""
+    def __init__(self):
+        self.writes = []
+
+    def i2c_rdwr(self, *msgs):
+        for m in msgs:
+            self.writes.append(bytes(m))
+
+
+def test_command_frames_on_the_wire():
+    bus = FakeBus()
+    A.open_lcd(bus, True)
+    A.open_lcd(bus, False)
+    A.set_mode(bus, 3)
+    A.set_mode(bus, 7)      # quirk: mode 7 sends 9+1
+    A.set_carousel(bus, [0, 1, 4], arg=2)
+    A.power_off_mode(bus)
+    ops = [(w[0], w[5], w[6:9]) for w in bus.writes]
+    assert ops[0][:2] == (0xE7, 1)
+    assert ops[1][:2] == (0xE7, 2)
+    assert ops[2][:2] == (0xE5, 4)
+    assert ops[3][:2] == (0xE5, 10)
+    assert ops[4] == (0xF3, 2, bytes([1, 2, 5]))
+    assert ops[5][0] == 0xFA
+    assert all(w[1:5] == A.MAGIC and len(w) == 256 for w in bus.writes)
+
+
+def test_set_brightness_mask_and_value():
+    bus = FakeBus()
+    A.set_brightness(bus, 200, mask=0x05)
+    w = bus.writes[0]
+    assert w[0] == 0xE1
+    assert w[5:13] == bytes([1, 0, 1, 0, 0, 0, 0, 0])
+    assert w[13] == 200
+
+
+def test_send_upload_pacing(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(A.time, "sleep", sleeps.append)
+    bus = FakeBus()
+    frames = A.build_upload(b"\x33" * 300, A.FB_STATIC)   # BEGIN,F1,c1,c2,END
+    A.send_upload(bus, frames)
+    assert bus.writes == frames
+    assert sleeps[:2] == [A.PACE_BEGIN, A.PACE_HEADER]
+    assert all(s == A.PACE_CHUNK for s in sleeps[2:])
+
+
+def test_upload_content_mode_ordering(monkeypatch):
+    monkeypatch.setattr(A.time, "sleep", lambda s: None)
+    frames = A.build_upload(b"\x44" * 300, A.FB_STATIC)
+    # image/text: SetMode AFTER the upload
+    bus = FakeBus()
+    A.upload_content(bus, frames, A.MODE_STATIC, is_gif=False)
+    assert bus.writes[-1][0] == 0xE5 and bus.writes[-1][5] == A.MODE_STATIC + 1
+    assert bus.writes[:-1] == frames
+    # gif: SetMode BEFORE streaming (fb 0 is a live buffer)
+    bus = FakeBus()
+    A.upload_content(bus, frames, A.MODE_GIF, is_gif=True)
+    assert bus.writes[0][0] == 0xE5 and bus.writes[0][5] == A.MODE_GIF + 1
+    assert bus.writes[1:] == frames
+    # --no-mode: upload only
+    bus = FakeBus()
+    A.upload_content(bus, frames, A.MODE_STATIC, is_gif=False, set_display_mode=False)
+    assert bus.writes == frames
