@@ -134,3 +134,163 @@ def test_gif_to_le565_frames(tmp_path):
     assert len(frames) == len(delays) == 7
     assert all(len(f) == A.FRAME_BYTES for f in frames)
     assert delays == [50] * 7
+
+
+# ---- GIF RLE pipeline -----------------------------------------------------------
+
+def _rle_decode(blob):
+    """Reference decoder mirroring the firmware: head = u16 LE, bit15 = run flag,
+    low 15 bits = pixel count. Run: head + 1 pixel; literal: head + count px."""
+    out = bytearray()
+    pos = 0
+    while pos < len(blob):
+        head = blob[pos] | (blob[pos + 1] << 8)
+        cnt = head & 0x7FFF
+        assert cnt, f"zero-count token at {pos}"
+        if head & 0x8000:
+            out += blob[pos + 2:pos + 4] * cnt
+            pos += 4
+        else:
+            out += blob[pos + 2:pos + 2 + 2 * cnt]
+            pos += 2 + 2 * cnt
+    return bytes(out)
+
+
+def _px(*words):
+    return b"".join(w.to_bytes(2, "little") for w in words)
+
+
+def test_rle_run():
+    px = _px(*[0x1234] * 6)
+    assert A.rle_encode_frame(px) == b"\x06\x80" + _px(0x1234)
+
+
+def test_rle_literal():
+    px = _px(1, 2, 1, 2, 1, 2)
+    assert A.rle_encode_frame(px) == b"\x06\x00" + px
+
+
+def test_rle_short_tail_is_literal_even_if_equal():
+    # <4 px left in the window -> whole window is ONE literal, even all-equal.
+    px = _px(7, 7, 7)
+    assert A.rle_encode_frame(px) == b"\x03\x00" + px
+
+
+def test_rle_literal_then_run():
+    px = _px(1, 2) + _px(*[9] * 4) + _px(5, 6, 7, 8, 5, 6)
+    got = A.rle_encode_frame(px)
+    assert got == (b"\x02\x00" + _px(1, 2)
+                   + b"\x04\x80" + _px(9)
+                   + b"\x06\x00" + _px(5, 6, 7, 8, 5, 6))
+
+
+def test_rle_round_trip_random_ish():
+    # deterministic pseudo-random frame; encoder output must decode to input
+    px = bytearray()
+    v = 12345
+    for _ in range(A.FRAME_PIXELS):
+        v = (v * 1103515245 + 12345) & 0x7FFFFFFF
+        px += ((v >> 7) & 0xFFFF).to_bytes(2, "little")
+    px = bytes(px)
+    assert _rle_decode(A.rle_encode_frame(px)) == px
+
+
+def test_rle_rejects_tiny_frames():
+    import pytest
+    with pytest.raises(ValueError):
+        A.rle_encode_frame(_px(1, 2))
+
+
+def test_gif_frame_table_offsets():
+    # sizes [10, 20], N=2: header = 2 + 10*2 = 22 bytes.
+    # entry u32 = inclusive end offset: 22+10-1 = 31, then 32+20-1 = 51.
+    t = A.gif_frame_table([10, 20])
+    assert struct.unpack_from("<H", t, 0)[0] == 2
+    e0 = struct.unpack_from("<IHHH", t, 2)
+    e1 = struct.unpack_from("<IHHH", t, 12)
+    assert e0 == (31, A.W, A.H, 3)
+    assert e1 == (51, A.W, A.H, 3)
+    assert len(t) == 22
+
+
+def _walk_rle_frame(buf, pos):
+    """Walk one full-frame RLE blob; return its byte size."""
+    start, px = pos, 0
+    while px < A.FRAME_PIXELS:
+        head = buf[pos] | (buf[pos + 1] << 8)
+        cnt = head & 0x7FFF
+        assert cnt
+        pos += 4 if head & 0x8000 else 2 + 2 * cnt
+        px += cnt
+    assert px == A.FRAME_PIXELS
+    return pos - start
+
+
+def test_gif_payload_self_consistent(tmp_path):
+    p = str(tmp_path / "t.gif")
+    _write_test_gif(p)
+    payload, n, d = A.build_gif_payload(p)
+    assert n == 7
+    assert d == 50, "header delay = average gif frame duration in ms"
+    assert struct.unpack_from("<H", payload, 0)[0] == 7
+    pos = cum = 2 + 10 * n
+    for i in range(n):
+        u32, w, h, t = struct.unpack_from("<IHHH", payload, 2 + 10 * i)
+        size = _walk_rle_frame(payload, pos)
+        cum += size
+        assert u32 == cum - 1, f"frame {i} end offset"
+        assert (w, h, t) == (A.W, A.H, 3)
+        pos += size
+    assert pos == len(payload), "no leftover bytes"
+
+
+def test_build_gif_frames_wraps_payload(tmp_path):
+    p = str(tmp_path / "t.gif")
+    _write_test_gif(p)
+    frames, n = A.build_gif_frames(p)
+    assert n == 7
+    assert frames[0][:6] == F2 + b"\x01" and frames[-1][:6] == F2 + b"\x02"
+    hdr = frames[1]
+    assert hdr[0] == 0xF1 and hdr[9] == 2, "gif flag"
+    assert int.from_bytes(hdr[14:16], "big") == n
+    payload, _, _ = A.build_gif_payload(p)
+    body = b"".join(frames[2:-1])
+    nchunks = len(payload) // 256 + 1
+    assert int.from_bytes(hdr[10:14], "big") == nchunks
+    assert len(body) == nchunks * 256
+    assert body[:len(payload)] == payload
+    assert not any(body[len(payload):])
+
+
+# ---- optional ground truth against GCC's animation.bin --------------------------
+
+def _find_anim():
+    for p in (os.environ.get("AORUS_ANIM_BIN", ""),
+              "/mnt/win/Program Files/GIGABYTE/Control Center/Lib/GBT_VGA/Assets/animation.bin"):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def test_encoder_matches_gcc_ground_truth():
+    """Re-encode every RLE blob in GCC's own animation.bin; must be byte-identical.
+    Skips unless the Windows mount or $AORUS_ANIM_BIN is available."""
+    import pytest
+    path = _find_anim()
+    if not path:
+        pytest.skip("animation.bin not found (mount Windows or set $AORUS_ANIM_BIN)")
+    anim = open(path, "rb").read()
+    n = struct.unpack_from("<H", anim, 0)[0]
+    pos = 2 + 10 * n
+    sizes = []
+    for _ in range(n):
+        s = _walk_rle_frame(anim, pos)
+        sizes.append(s)
+        pos += s
+    assert pos == len(anim)
+    assert A.gif_frame_table(sizes) == anim[:2 + 10 * n], "frame table"
+    off = 2 + 10 * n
+    for i, s in enumerate(sizes):
+        blob = anim[off:off + s]
+        off += s
+        assert A.rle_encode_frame(_rle_decode(blob)) == blob, f"frame {i} re-encode"

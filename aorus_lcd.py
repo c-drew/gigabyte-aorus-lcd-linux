@@ -167,3 +167,87 @@ def gif_to_le565_frames(path):
             frames.append(image_to_le565(fr))
             delays.append(im.info.get("duration", 100))
     return frames, delays
+
+
+# ---- animated GIF pipeline -------------------------------------------------------
+# Payload = <frameCount:2 LE> + table[frameCount] of <endOffset:4><w:2><h:2><fmt:2>
+# + concatenated RLE frames. The u32 is the INCLUSIVE end offset of that frame's
+# RLE blob within the payload: 2 + 10*N + sum(size[0..i]) - 1. Confirmed 60/60
+# against GCC's Assets/animation.bin and in ucVga.dll IL (ImageMaker.SaveZipData).
+# There is no checksum anywhere.
+
+def rle_encode_frame(px):
+    """RLE-encode one LE-RGB565 frame EXACTLY like GCC's Compress_RLE (byte-identical;
+    validated by re-encoding every animation.bin blob). True token grammar:
+    head = u16 LE, bit15 = run flag, low 15 bits = pixel count (can exceed 255!):
+      run    : <count|0x8000 : u16 LE> <pixel : 2B>     (emitted only for >=3 equal px)
+      literal: <count : u16 LE> <count pixels>
+    Scanning (per findSameData/findMaxSameData IL): windows of <= 0x7FFF px; within a
+    window the literal extends to the first >=3-equal-pixel repeat and the run is
+    maximal but never crosses the window end; if the window has no repeat — or fewer
+    than 4 px remain in it — the WHOLE window is one literal (so a trailing <4 px tail
+    is a literal even if its pixels are all equal). The firmware decoder is the mirror
+    of this encoder, so exact reproduction matters — do not 'optimize' the quirks."""
+    mv = memoryview(px).cast("H")           # u16 pixel view (little-endian host)
+    n = len(mv)
+    if n < 3:
+        raise ValueError("frame too small for Compress_RLE semantics")
+    out = bytearray()
+    i = 0
+    while i < n:
+        wend = i + min(0x7FFF, n - i)       # window [i, wend)
+        wlen = wend - i
+        if wlen < 4:
+            diff, same = wlen, 0
+        else:
+            j = i
+            while True:
+                if j + 2 == wend:           # no repeat before window end: all literal
+                    diff, same = wlen, 0
+                    break
+                if mv[j] == mv[j + 1] == mv[j + 2]:
+                    rs = j
+                    j += 2
+                    while j < wend - 1 and mv[j] == mv[j + 1]:
+                        j += 1
+                    diff, same = rs - i, j + 1 - rs
+                    break
+                j += 1
+        if diff:
+            out += diff.to_bytes(2, "little")
+            out += px[2 * i:2 * (i + diff)]
+        if same:
+            out += (same | 0x8000).to_bytes(2, "little")
+            out += px[2 * (i + diff):2 * (i + diff) + 2]
+        i += diff + same
+    return bytes(out)
+
+
+def gif_frame_table(sizes, w=W, h=H, fmt=3):
+    """[frameCount:2 LE] + one 10-byte entry per frame:
+    [endOffset:4 LE][w:2][h:2][fmt:2] (fmt 3 = RLE)."""
+    n = len(sizes)
+    out = bytearray(n.to_bytes(2, "little"))
+    cum = 2 + 10 * n
+    for s in sizes:
+        cum += s
+        out += (cum - 1).to_bytes(4, "little")
+        out += w.to_bytes(2, "little") + h.to_bytes(2, "little") + fmt.to_bytes(2, "little")
+    return bytes(out)
+
+
+def build_gif_payload(gif_path, delay=None):
+    """Decode gif -> RLE-compress each frame -> <frameCount> + table + blobs.
+    Returns (payload, frame_count, header_delay_ms). Header delay unit is
+    MILLISECONDS (GCC GetGifDelay = gif centiseconds*10, stored raw, IL-confirmed)."""
+    frames, delays = gif_to_le565_frames(gif_path)
+    rle = [rle_encode_frame(f) for f in frames]
+    d = delay if delay is not None else min(255, max(1, round(sum(delays) / len(delays))))
+    payload = gif_frame_table([len(r) for r in rle]) + b"".join(rle)
+    return payload, len(frames), d
+
+
+def build_gif_frames(gif_path, delay=None):
+    """Animated-gif upload frame list (fb 0x00000000, flag 2) + frame count."""
+    payload, n, d = build_gif_payload(gif_path, delay)
+    return build_upload(payload, FB_GIF, flag=2, nframes=n, delay=d, mode=2), n
