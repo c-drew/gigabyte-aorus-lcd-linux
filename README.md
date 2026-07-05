@@ -4,11 +4,13 @@ Control the "LCD Edge View" screen on the Gigabyte Aorus Master RTX 5090 from
 Linux — no Gigabyte software needed.
 
 ```
-sudo ./aorus_lcd.py image wallpaper.png
+sudo .venv/bin/python aorus_lcd.py image wallpaper.png
 ```
 
 That resizes `wallpaper.png` to 320x170, uploads it over i2c, and switches the
-panel to display it.
+panel to display it. (See [Install](#install) for the one-time venv setup;
+`sudo ./aorus_lcd.py ...` also works if `smbus2` and `Pillow` are installed
+system-wide.)
 
 ## Status: ALPHA
 
@@ -96,7 +98,8 @@ sudo .venv/bin/python aorus_lcd.py off
 ```
 
 Switch to a built-in display mode (0-7; 3=image, 4=text, 5=gif, 6=chibi —
-0-2 and 7 are Gigabyte's built-in screens, e.g. GPU stats):
+0-2 are Gigabyte's built-in screens, e.g. GPU stats; 7 is accepted but
+unconfirmed — a GCC quirk remaps it to internal value 9):
 
 ```bash
 sudo .venv/bin/python aorus_lcd.py mode 3
@@ -156,6 +159,8 @@ Pillow, safe to run anywhere):
 ```
 
 ## How it works
+
+The panel is 320x170; pixel data is little-endian RGB565, row-major.
 
 Every command to the panel is a 256-byte i2c block write of the form
 `[opcode, CB 55 AC 38, params...]`, zero-padded to 256 bytes.
