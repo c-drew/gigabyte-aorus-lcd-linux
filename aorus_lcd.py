@@ -117,13 +117,14 @@ def build_upload(pdata, fb_addr, flag=1, nframes=0, delay=0, mode=None):
 
 def image_to_le565(im):
     """PIL RGB image already sized (W, H) -> little-endian RGB565 bytes."""
+    rgb = im.tobytes("raw", "RGB")
     out = bytearray(FRAME_BYTES)
-    i = 0
-    for (r, g, b) in im.getdata():
-        v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        out[i] = v & 0xFF
-        out[i + 1] = (v >> 8) & 0xFF
-        i += 2
+    j = 0
+    for i in range(0, len(rgb), 3):
+        v = ((rgb[i] & 0xF8) << 8) | ((rgb[i + 1] & 0xFC) << 3) | (rgb[i + 2] >> 3)
+        out[j] = v & 0xFF
+        out[j + 1] = (v >> 8) & 0xFF
+        j += 2
     return bytes(out)
 
 
@@ -158,11 +159,11 @@ def render_text_le565(text, size=28, fg=(139, 141, 139), bg=(0, 0, 0)):
 def gif_to_le565_frames(path):
     """Decode an animated gif -> (list of LE-RGB565 frames, per-frame delays ms)."""
     from PIL import Image
-    im = Image.open(path)
     frames, delays = [], []
-    for i in range(getattr(im, "n_frames", 1)):
-        im.seek(i)
-        fr = im.convert("RGB").resize((W, H), Image.LANCZOS)
-        frames.append(image_to_le565(fr))
-        delays.append(im.info.get("duration", 100))
+    with Image.open(path) as im:
+        for i in range(getattr(im, "n_frames", 1)):
+            im.seek(i)
+            fr = im.convert("RGB").resize((W, H), Image.LANCZOS)
+            frames.append(image_to_le565(fr))
+            delays.append(im.info.get("duration", 100))
     return frames, delays
