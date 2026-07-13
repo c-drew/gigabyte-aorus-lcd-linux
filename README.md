@@ -224,7 +224,9 @@ IL; no Gigabyte code is included.
 (`sudo modprobe i2c-dev`), or your card doesn't expose an adapter named
 `NVIDIA i2c adapter 1 at ...` — which likely means it's not an Aorus Master
 RTX 5090, or it uses the newer LcdEx (0x76) protocol this tool doesn't speak.
-Pass `--bus N` if you know the right bus and want to try anyway.
+Pass `--bus N` if you know the right bus and want to try anyway — but note
+that even `probe` writes its status query to address 0x61 on the bus you name,
+so only force a bus you have reason to trust.
 
 **`probe` finds the bus but reports no response.** Right after boot the
 controller can take a little while to come up — retry for a minute before

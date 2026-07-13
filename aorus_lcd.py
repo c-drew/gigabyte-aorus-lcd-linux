@@ -14,7 +14,8 @@ legacy 0x61 protocol, reverse-engineered from live GCC traffic and ucVga.dll:
               then E5 SetMode selects what the panel displays.
 
 ALPHA software, tested on exactly one card (Aorus Master RTX 5090). Writes are
-refused unless 0x61 ACKs a zero-length probe on the selected bus first.
+refused unless the controller first answers the EB 03 status query (an 8-byte
+read-back) on the selected bus.
 
 Requires: python3-smbus2 (pip install smbus2); Pillow for image/text/gif.
 Run as root or in the 'i2c' group; `sudo modprobe i2c-dev` first.
@@ -602,7 +603,8 @@ def build_parser():
 
     def add_upload_opts(p):
         p.add_argument("--no-mode", action="store_true",
-                       help="upload only; skip the display-mode switch")
+                       help="upload only; skip the display-mode switch "
+                            "(for text, also skips the AA effect)")
         p.add_argument("--chunk-delay", type=float, default=PACE_CHUNK, metavar="SEC",
                        help=f"delay between 256-byte chunks (default {PACE_CHUNK})")
 
