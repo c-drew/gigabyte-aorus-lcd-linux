@@ -350,6 +350,63 @@ def test_command_frames_on_the_wire():
     assert all(w[1:5] == A.MAGIC and len(w) == 256 for w in bus.writes)
 
 
+class FakeStatusBus(FakeBus):
+    """FakeBus that also answers i2c reads with a canned status reply."""
+    def __init__(self, reply=bytes.fromhex("ff ff ff 00 00 00 00 00"), fail_read=False):
+        super().__init__()
+        self.reply = reply
+        self.fail_read = fail_read
+        self.reads = 0
+
+    def i2c_rdwr(self, *msgs):
+        for m in msgs:
+            if m.flags & 0x0001:            # I2C_M_RD
+                if self.fail_read:
+                    raise OSError(5, "Input/output error")
+                self.reads += 1
+                for i in range(min(m.len, len(self.reply))):
+                    m.buf[i] = bytes([self.reply[i]])
+            else:
+                self.writes.append(bytes(m))
+
+
+def test_read_cmd_writes_query_then_reads():
+    bus = FakeStatusBus()
+    data = A.read_cmd(bus, 0xEB)
+    w = bus.writes[0]
+    assert w[0] == 0xEB and w[1:5] == A.MAGIC and w[5] == 0x03 and len(w) == 256
+    assert bus.reads == 1
+    assert data == bus.reply
+
+
+def _patch_smbus(monkeypatch, fake):
+    class CM:
+        def __init__(self, n): pass
+        def __enter__(self): return fake
+        def __exit__(self, *exc): return False
+    monkeypatch.setattr(A, "SMBus", CM)
+
+
+def test_probe_is_a_status_query_not_a_quick_write(monkeypatch):
+    # Regression: the NVIDIA adapter EIOs 0-length "quick" writes even with the
+    # panel present, and unconnected DDC ports falsely ACK them. probe() must
+    # instead require a successful EB 03 read-back.
+    fake = FakeStatusBus()
+    _patch_smbus(monkeypatch, fake)
+    ok, detail = A.probe(0)
+    assert ok
+    assert fake.writes[0][0] == 0xEB and fake.reads == 1
+    assert "0x61" in detail
+
+
+def test_probe_fails_when_readback_fails(monkeypatch):
+    fake = FakeStatusBus(fail_read=True)
+    _patch_smbus(monkeypatch, fake)
+    ok, detail = A.probe(0)
+    assert not ok
+    assert "no response" in detail
+
+
 def test_set_brightness_mask_and_value():
     bus = FakeBus()
     A.set_brightness(bus, 200, mask=0x05)

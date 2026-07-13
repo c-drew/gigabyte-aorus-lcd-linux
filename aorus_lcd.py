@@ -51,6 +51,7 @@ OP_SETDISP  = 0xE1   # element bitmask + value (brightness) — EXPERIMENTAL
 OP_SETLOOP  = 0xF3   # carousel: byte5 = arg, byte6.. = (mode+1) play order
 OP_POWEROFF = 0xFA   # SetPCPowerOffMode — EXPERIMENTAL
 OP_TEXTFX   = 0xAA   # sent after a text upload; applies the rainbow effect
+OP_GETDATA  = 0xEB   # status query (EB 03): write frame, read 8 bytes back
 
 # upload pacing the panel firmware needs (from working captures):
 PACE_BEGIN, PACE_HEADER, PACE_CHUNK = 0.5, 1.0, 0.01
@@ -283,23 +284,27 @@ def find_nvidia_bus(sys_root=SYS_I2C_DEV):
 
 
 def probe(bus_n):
-    """Low-risk presence check: a 0-length write (SMBus quick) to 0x61.
-    ACK => controller present. (0x61 is not a monitor DDC address.)"""
+    """Presence check: send the EB 03 status query (the same poll GCC uses) and
+    require an 8-byte read-back. A 0-length "quick" write is NOT a valid probe
+    here — the NVIDIA adapter rejects it with EIO even when the panel is
+    present, and unconnected DDC ports falsely ACK it — wrong in both
+    directions. A completed read-back is real evidence of the controller."""
     try:
         with SMBus(bus_n) as bus:
-            bus.i2c_rdwr(i2c_msg.write(ADDR, b""))
-        return True, "ACK (device present at 0x61)"
+            status = read_cmd(bus, OP_GETDATA)
+        return True, f"device present at 0x61 (status {status.hex(' ')})"
     except FileNotFoundError:
         return False, "bus not present (is i2c-dev loaded? sudo modprobe i2c-dev)"
     except PermissionError:
         return False, "permission denied (run as root, or add yourself to the 'i2c' group)"
     except OSError as e:
-        return False, f"no ACK ({e})"
+        return False, f"no response ({e})"
 
 
 def resolve_bus(bus_arg):
-    """Return a bus number verified to ACK at 0x61, or exit with a clear error.
-    With bus_arg=None, autodetect the NVIDIA bus by adapter name."""
+    """Return a bus number verified to answer the 0x61 status query, or exit
+    with a clear error. With bus_arg=None, autodetect the NVIDIA bus by
+    adapter name."""
     if bus_arg is not None:
         ok, detail = probe(bus_arg)
         if not ok:

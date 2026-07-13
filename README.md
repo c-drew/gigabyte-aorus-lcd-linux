@@ -23,8 +23,8 @@ This is a reverse-engineered protocol implementation, not an official driver.
 - Other Gigabyte cards with an LCD side-screen may use a different, newer
   protocol (referred to in the decompile as "LcdEx", at i2c address 0x76).
   This tool does not speak that protocol. On such a card it will either fail
-  to find a compatible bus, or `probe` will report no ACK at 0x61 — it will
-  not attempt anything unverified.
+  to find a compatible bus, or `probe` will report no response at 0x61 — it
+  will not attempt anything unverified.
 - Commands marked `[experimental]` in `--help` (`brightness`, `poweroff-mode`,
   `raw`, `raw-read`) have semantics inferred from the decompiled code, not
   confirmed against hardware behavior. Use them to explore, not to depend on.
@@ -37,9 +37,12 @@ This is a reverse-engineered protocol implementation, not an official driver.
 - The GPU's internal i2c bus is located by its sysfs adapter **name**
   (`NVIDIA i2c adapter 1 at ...`), never by guessing a `/dev/i2c-N` path. On a
   multi-GPU or otherwise unusual system this avoids landing on the wrong bus.
-- Before any write, the tool sends a zero-length probe to 0x61 and requires an
-  ACK. If nothing acks, it refuses to write and tells you why (`probe`,
-  `resolve_bus` in `aorus_lcd.py`).
+- Before doing anything else, the tool sends the controller's own status query
+  (`EB 03`, the same poll Gigabyte Control Center uses) to 0x61 and requires a
+  read-back. If nothing answers, it refuses to write and tells you why
+  (`probe`, `resolve_bus` in `aorus_lcd.py`). A plain 0-length "quick write"
+  probe is deliberately NOT used: the NVIDIA adapter rejects it even when the
+  panel is present, and unconnected DDC ports falsely ACK it.
 - Nothing here flashes firmware or touches persistent GPU state beyond the
   panel's own image memory. The worst observed failure mode during
   development was the panel showing stale or black content until the next
@@ -222,6 +225,11 @@ IL; no Gigabyte code is included.
 `NVIDIA i2c adapter 1 at ...` — which likely means it's not an Aorus Master
 RTX 5090, or it uses the newer LcdEx (0x76) protocol this tool doesn't speak.
 Pass `--bus N` if you know the right bus and want to try anyway.
+
+**`probe` finds the bus but reports no response.** Right after boot the
+controller can take a little while to come up — retry for a minute before
+concluding it's absent. If it never answers but display commands still work,
+please open an issue with your card model and `dmesg | grep -i i2c` output.
 
 **Permission denied.** Run with `sudo`, or add yourself to the `i2c` group
 and re-login (see Install above).
