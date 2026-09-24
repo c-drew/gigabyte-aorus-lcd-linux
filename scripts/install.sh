@@ -22,7 +22,7 @@ if [[ $# -ge 1 ]]; then
 elif [[ ! -e /etc/aorus-lcd/config.toml ]]; then
     install -m 644 "$repo/examples/config.toml" /etc/aorus-lcd/config.toml
 fi
-"$prefix/bin/python" -c "import aorus_lcd.config as c; c.load('/etc/aorus-lcd/config.toml')"
+"$prefix/bin/python" -I -c "import aorus_lcd.config as c; c.load('/etc/aorus-lcd/config.toml')"
 
 install -m 644 "$repo/systemd/aorus-lcd.service" /etc/systemd/system/aorus-lcd.service
 install -D -m 644 "$repo/desktop/aorus-lcd.desktop" /usr/local/share/applications/aorus-lcd.desktop
