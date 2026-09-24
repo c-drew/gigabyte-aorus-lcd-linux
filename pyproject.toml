@@ -32,5 +32,8 @@ Homepage = "https://github.com/c-drew/gigabyte-aorus-lcd-linux"
 [tool.setuptools.packages.find]
 include = ["aorus_lcd*"]
 
+[tool.setuptools.package-data]
+aorus_lcd = ["static/*"]
+
 [tool.setuptools.dynamic]
 version = { attr = "aorus_lcd.__version__" }

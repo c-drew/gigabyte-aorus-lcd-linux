@@ -204,6 +204,11 @@ class Upload:
     def header_pause(self):
         return header_pause(len(self.payload), self.erase_mode or gcc_erase_mode(len(self.payload)))
 
+    def estimate_seconds(self, chunk_delay=PACE_CHUNK, write_seconds=0.0065):
+        """Rough wall time: pacing plus ~6.5 ms per 256-byte write at 400 kHz."""
+        n = chunk_count(len(self.payload))
+        return PACE_BEGIN + self.header_pause + n * (chunk_delay + write_seconds) + 0.8
+
     @property
     def mode_first(self):
         """GIF streams into a live buffer: select the mode before uploading."""
@@ -211,9 +216,10 @@ class Upload:
 
 
 def still_upload(pixels, kind="image"):
-    """One LE-RGB565 frame for the image (mode 3) or text (mode 4) framebuffer.
-    Always uncompressed: those framebuffers do not decode RLE (tested: an RLE
-    still shows nothing). Only GIF mode takes compressed frames."""
+    """GCC's image (mode 3) / text (mode 4) framebuffer upload, uncompressed.
+    Kept for reference: on LCD firmware 1.3 these uploads can complete without
+    drawing anything, and they do not decode RLE, so content.still() sends
+    stills as single-frame GIFs instead."""
     if len(pixels) != FRAME_BYTES:
         raise ValueError(f"expected {FRAME_BYTES} bytes of pixels")
     fb, mode = (FB_TEXT, MODE_TEXT) if kind == "text" else (FB_IMAGE, MODE_IMAGE)

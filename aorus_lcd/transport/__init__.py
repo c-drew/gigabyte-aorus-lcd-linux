@@ -1,6 +1,6 @@
 """Bus transports and a factory that picks the GPU and opens one."""
 from .base import (ALLOWED_ADDRESSES, BOOTLOADER_ADDRESSES, LCD_ADDRESS, RGB_ADDRESS,
-                   Transport, TransportError)
+                   WRITE_ONLY_ADDRESSES, Transport, TransportError)
 from .gpu import Gpu, find_gpu, list_gpus
 
 TRANSPORTS = ("nvrm", "i2c-dev")

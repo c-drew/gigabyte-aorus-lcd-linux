@@ -218,7 +218,7 @@ class NvRmTransport(Transport):
             raise RmError(status, what)
 
     def read(self, address, length, speed_khz=None):
-        self.check(address, length)
+        self.check(address, length, write=False)
         buf = (u8 * length)()
         what = f"read {length} bytes from {address:#04x}"
         status = self._transaction(address, self._speed_flags(speed_khz), I2C_BLOCK_RW, False, buf, what)
@@ -227,7 +227,7 @@ class NvRmTransport(Transport):
         return bytes(buf)
 
     def ping(self, address, speed_khz=None):
-        self.check(address, 1)
+        self.check(address, 1, write=False)          # no probing the RGB controller
         what = f"ping {address:#04x}"
         status = self._transaction(address, self._speed_flags(speed_khz) | FLAG_PING,
                                    SMBUS_QUICK_RW, True, None, what)

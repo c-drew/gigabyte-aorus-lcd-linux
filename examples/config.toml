@@ -41,3 +41,22 @@ refresh_seconds = 30.0    # resend unchanged values this often
 # are only sent when they move at least this much:
 min_change = { temp = 1, clock = 15, usage = 2, fan = 50, vram_clock = 15, vram = 1, power = 3 }
 clear_on_exit = true
+
+[web]
+# Browser UI at http://127.0.0.1:5090 (served by the daemon). Choices made there
+# are saved in the service's state directory and win until this file changes.
+enabled = true
+bind = "127.0.0.1"        # keep it local: anything that can reach it can drive the panel
+port = 5090
+max_upload_mb = 32
+
+[lighting]
+# The GPU's own RGB (RGB Fusion 2 on the same bus as the LCD). Off by default so
+# this tool never fights OpenRGB; enable to manage it here or from the web UI.
+enabled = false
+mode = "static"           # static, breathing, flashing, dual-flashing, color-cycle, wave,
+                          # gradient, color-shift, tricolor, dazzle, off
+colors = ["#ff0000"]      # color-shift/tricolor/dazzle use the whole list
+brightness = 5            # 1..10
+speed = 3                 # 1..6
+save_to_card = true       # persist in the card so it survives reboots

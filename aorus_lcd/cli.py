@@ -87,6 +87,8 @@ def _content_cfg(args):
         c = replace(c, offset=_xy(args.offset))
     if getattr(args, "pulse", False):
         c = replace(c, animate="pulse")
+    if getattr(args, "wave", False):
+        c = replace(c, effect="wave")
     C.validate(C.Config(content=c))
     return c
 
@@ -136,20 +138,52 @@ def cmd_stats(args):
 
 
 def cmd_apply(args):
+    from .controller import Controller
     cfg = C.load(args.config)
-    if args.gpu:
-        cfg.panel.gpu = args.gpu
-    with open_transport(cfg.panel.transport, find_gpu(cfg.panel.gpu or None), cfg.panel.speed_khz) as t:
+    gpu = find_gpu(args.gpu or cfg.panel.gpu or None)
+    ctl = Controller(cfg, daemon.state_dir(), gpu=gpu)
+    with open_transport(cfg.panel.transport, gpu, cfg.panel.speed_khz) as t:
         p = Panel(t)
         p.probe()
         p.power(True)
-        daemon.apply_content(p, cfg, daemon.state_dir() / "state.json", args.force, _progress)
-        daemon.apply_overlay(p, cfg)
+        ctl.attach(p)
+        ctl.apply_all(args.force)
 
 
 def cmd_daemon(args):
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    daemon.run(args.config, args.force)
+    daemon.run(args.config, args.force, web=not args.no_web)
+
+
+def _ui_url(config_path):
+    cfg = daemon.load_config(config_path)
+    return f"http://127.0.0.1:{cfg.web.port}/"
+
+
+def _ui_alive(url):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url + "api/status", timeout=0.5) as r:
+            return r.status == 200
+    except OSError:
+        return False
+
+
+def cmd_gui(args):
+    import webbrowser
+    url = _ui_url(args.config)
+    if _ui_alive(url):
+        print(f"aorus-lcd is running: {url}")
+        if not args.no_open:
+            webbrowser.open(url)
+        return
+    print(f"starting aorus-lcd with the web UI at {url} (Ctrl+C to stop)")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    def ready(ctl, server):
+        if server and not args.no_open:
+            webbrowser.open(url)
+    daemon.run(args.config, web=True, on_ready=ready)
 
 
 def cmd_query(args):
@@ -261,6 +295,7 @@ def build_parser():
     p.add_argument("--color", default="#ffffff")
     p.add_argument("--size", type=int)
     p.add_argument("--font")
+    p.add_argument("--wave", action="store_true", help="the panel's rainbow wave text effect")
 
     p = sub.add_parser("overlay", help="the firmware's GPU-stats widgets over the content")
     p.add_argument("--widgets", default="temp,usage,power", help=f"comma list of: {', '.join(P.WIDGETS)}")
@@ -279,10 +314,15 @@ def build_parser():
     p.add_argument("--config", default=C.DEFAULT_PATH)
     p.add_argument("--force", action="store_true", help="re-upload even if unchanged")
     p.set_defaults(func=cmd_apply)
-    p = sub.add_parser("daemon", help="apply a config and keep the stats fed (systemd service)")
+    p = sub.add_parser("daemon", help="the service: config + live stats + web UI (systemd)")
     p.add_argument("--config", default=C.DEFAULT_PATH)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--no-web", action="store_true", help="do not serve the web UI")
     p.set_defaults(func=cmd_daemon)
+    p = sub.add_parser("gui", help="open the web UI (starts the service in the foreground if needed)")
+    p.add_argument("--config", default=C.DEFAULT_PATH)
+    p.add_argument("--no-open", action="store_true", help="do not open a browser")
+    p.set_defaults(func=cmd_gui)
     p = sub.add_parser("query", help="send a read command, e.g. 'de' or 'eb 02', print the reply")
     p.add_argument("hex")
     p.set_defaults(func=cmd_query)

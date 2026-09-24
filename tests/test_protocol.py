@@ -175,3 +175,17 @@ def test_header_pause_covers_every_erase():
     assert P.header_pause(1000, P.ERASE_SECTOR) == P.PACE_HEADER         # small uploads: GCC timing
     assert P.header_pause(127114, P.ERASE_SECTOR) >= 32 * 0.1
     assert P.still_upload(bytes(P.FRAME_BYTES)).frames[1][17] == P.ERASE_SECTOR
+
+
+def test_stills_are_sent_as_single_frame_gifs():
+    from aorus_lcd import config as C, content
+    up = content.build(C.ContentConfig(type="text", text="hi"))
+    assert up.kind == "gif" and up.mode == P.MODE_GIF and up.nframes == 1
+    assert len(up.frames) < 20, "RLE keeps a mostly-black still tiny"
+
+
+def test_text_wave_uses_the_panels_text_mode_like_gcc():
+    from aorus_lcd import config as C, content
+    up = content.build(C.ContentConfig(type="text", text="hi", effect="wave"))
+    assert up.mode == P.MODE_TEXT and up.fb_addr == P.FB_TEXT and up.erase_mode == P.ERASE_BLOCK
+    assert up.frames[1][17] == P.ERASE_BLOCK

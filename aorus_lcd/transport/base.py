@@ -3,8 +3,9 @@
 # 7-bit addresses on the GPU's internal I2C port (port 1).
 LCD_ADDRESS = 0x61                 # LCD application firmware
 BOOTLOADER_ADDRESSES = (0x22, 0x23)  # LCD IAP bootloader (vendor 0x44 / 0x46)
-RGB_ADDRESS = 0x75                 # RGB Fusion controller: never touched by this project
+RGB_ADDRESS = 0x75                 # RGB Fusion 2 controller: WRITE-ONLY (a read wedges the bus)
 ALLOWED_ADDRESSES = (LCD_ADDRESS, *BOOTLOADER_ADDRESSES)
+WRITE_ONLY_ADDRESSES = (RGB_ADDRESS,)
 
 
 class TransportError(OSError):
@@ -12,8 +13,8 @@ class TransportError(OSError):
 
 
 class Transport:
-    """Minimal byte-level bus. Implementations restrict themselves to
-    ALLOWED_ADDRESSES so a bug higher up can never reach the RGB controller."""
+    """Minimal byte-level bus. Implementations restrict themselves to the LCD
+    addresses, plus writes (never reads) to the RGB controller."""
 
     name = "abstract"
 
@@ -37,8 +38,9 @@ class Transport:
         self.close()
 
     @staticmethod
-    def check(address: int, length: int) -> None:
-        if address not in ALLOWED_ADDRESSES:
-            raise ValueError(f"address {address:#04x} is not an LCD address")
+    def check(address: int, length: int, write: bool = True) -> None:
+        if address not in ALLOWED_ADDRESSES and not (write and address in WRITE_ONLY_ADDRESSES):
+            raise ValueError(f"address {address:#04x} is not allowed"
+                             + ("" if write else " for reads (the RGB controller is write-only)"))
         if not 1 <= length <= 256:
             raise ValueError("transfers must be 1..256 bytes")

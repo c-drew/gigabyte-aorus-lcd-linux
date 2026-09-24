@@ -2,7 +2,7 @@
 import pytest
 
 from aorus_lcd import config as C
-from aorus_lcd import daemon
+from aorus_lcd import controller as CTL
 from aorus_lcd import protocol as P
 from aorus_lcd.panel import BusLock, Panel
 from aorus_lcd.transport import Transport
@@ -37,9 +37,12 @@ def _panel(lcd):
     return Panel(lcd, lock=BusLock("aorus-lcd-test"), sleep=lambda s: None)
 
 
-def test_transport_refuses_the_rgb_controller():
+def test_rgb_controller_is_write_only():
+    Transport.check(0x75, 64)                      # writes are how it is driven
+    with pytest.raises(ValueError, match="write-only"):
+        Transport.check(0x75, 4, write=False)      # a read wedges the bus
     with pytest.raises(ValueError):
-        Transport.check(0x75, 4)
+        Transport.check(0x50, 1)                   # nothing else on the port
 
 
 def test_still_upload_then_mode():
@@ -92,7 +95,7 @@ def test_example_config_is_valid():
 
 def test_feeder_deadband_and_refresh():
     now = [0.0]
-    f = daemon.Feeder({"temp": 2, "power": 5}, refresh_seconds=30, clock=lambda: now[0])
+    f = CTL.Feeder({"temp": 2, "power": 5}, refresh_seconds=30, clock=lambda: now[0])
     s = P.Sample(temp=40, power=100)
     assert f.should_send(s)
     f.sent(s)
@@ -102,22 +105,26 @@ def test_feeder_deadband_and_refresh():
     assert f.should_send(s)
 
 
-def test_apply_content_skips_unchanged(tmp_path, monkeypatch):
+def _ctl(tmp_path, data):
+    ctl = CTL.Controller(C.parse(data), tmp_path)
     lcd = FakeLcd()
-    panel = _panel(lcd)
-    cfg = C.parse({"content": {"type": "text", "text": "hi"}})
-    state = tmp_path / "state.json"
-    assert daemon.apply_content(panel, cfg, state)
+    ctl.attach(_panel(lcd))
+    return ctl, lcd
+
+
+def test_apply_content_skips_unchanged(tmp_path):
+    ctl, lcd = _ctl(tmp_path, {"content": {"type": "text", "text": "hi"}})
+    assert ctl._apply_content()
     uploads = lcd.opcodes().count(0xF1)
-    assert not daemon.apply_content(panel, cfg, state)
+    assert not ctl._apply_content()
     assert lcd.opcodes().count(0xF1) == uploads
-    assert daemon.apply_content(panel, cfg, state, force=True)
+    assert ctl._apply_content(force=True)
 
 
 def test_apply_overlay_sends_template_then_widgets():
     lcd = FakeLcd()
     cfg = C.parse({"overlay": {"enabled": True, "widgets": ["temp"], "color": "#ff0000"}})
-    daemon.apply_overlay(_panel(lcd), cfg)
+    CTL.apply_overlay(_panel(lcd), cfg)
     assert lcd.opcodes() == [P.OP_SET_TEMPLATE, P.OP_SET_TEMPLATE, P.OP_SET_DISPLAY]
     assert {w[5] for w in lcd.writes[:2]} == {P.TEMPLATE_IMAGE, P.TEMPLATE_GIF}
     assert list(lcd.writes[0][6:9]) == [255, 0, 0]

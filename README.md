@@ -2,8 +2,9 @@
 
 Control the **LCD Edge View** side screen of the **Gigabyte AORUS GeForce RTX 5090 MASTER**
 (and likely other AORUS Master cards with the same panel) from Linux: logos, images, GIFs,
-text, and **live GPU stats**, set at every boot by a small systemd service. No Gigabyte
-Control Center, no Windows, no root.
+text, **live GPU stats** and the card's **RGB lighting**, from a browser UI or the command
+line, kept at every boot by a small systemd service. No Gigabyte Control Center, no Windows,
+no root.
 
 It can also **bring a black, dead-looking panel back to life**: if the LCD's firmware is
 stuck in its bootloader, `aorus-lcd firmware` reflashes it with Gigabyte's own firmware,
@@ -42,6 +43,29 @@ answer at 100 kHz. This project:
   Updates are only sent when a value moves, because every panel write costs ~6 ms of
   NVIDIA driver time.
 - **Recovers a panel stuck in its bootloader** (see below).
+
+## Web UI
+
+The service serves a small control page at **http://127.0.0.1:5090** (also "AORUS LCD" in
+your app launcher after `install.sh`): drop in a logo, image or GIF, type text, pick a
+colour, see an exact preview (the same renderer that uploads, animations included), send it,
+and tune the stats overlay and the GPU's RGB lighting. **Presets** save a whole look (screen
++ stats + lighting) and switch in one click. Choices made there persist across reboots; if
+you edit `/etc/aorus-lcd/config.toml` afterwards, the file wins.
+
+Without the service, `aorus-lcd gui` starts the same thing in the foreground and opens it.
+
+It only listens on 127.0.0.1, rejects requests from other sites (Host check + a required
+header), and grants nothing a local program could not already do.
+
+## GPU RGB lighting
+
+The card's RGB Fusion 2 controller (0x75) sits on the same I2C bus, so the tool can set it
+too: static, breathing, flashing, colour cycle, wave, gradient, colour shift, tricolour,
+dazzle or off, brightness 1-10, speed 1-6, saved to the card so it survives reboots. It is
+**off by default** (`[lighting] enabled = false`) so it never fights OpenRGB. The controller
+is write-only: the tool never reads it (a read wedges the bus) and only writes at 400 kHz.
+Protocol from OpenRGB's `GigabyteRGBFusion2BlackwellGPUController` via CodeTorchAI/AorusLcd.
 
 ## Install
 
@@ -83,11 +107,12 @@ flash), turns on the stats overlay, and keeps it fed. See
 | `logo FILE [--color C] [--scale S] [--anchor A] [--offset X,Y] [--pulse]` | SVG/PNG logo recoloured on black; `--pulse` uploads a breathing-glow GIF |
 | `image FILE [--fit contain\|cover]` | a picture, fitted to 320x170 |
 | `gif FILE` | an animated GIF |
-| `text "..." [--color C] [--size N]` | a text message |
+| `text "..." [--color C] [--size N] [--wave]` | a text message; `--wave` = the panel's own animated rainbow wave |
 | `overlay [--widgets ...] [--color C] [--data-pos X,Y] [--off]` | the firmware's stats widgets: `temp clock usage fan vram_clock vram fps power` |
 | `stats` | feed live values to the overlay in the foreground |
 | `power on\|off`, `mode N` | panel power; 0-2 Gigabyte stat screens, 3 image, 4 text, 5 gif, 6 chibi clock |
-| `apply`, `daemon` | apply a config once, or run the service |
+| `gui` | open the web UI (starts the service in the foreground if it is not running) |
+| `apply`, `daemon` | apply a config once, or run the service (with the web UI) |
 | `query HEX` | send a read command (`de`, `df`, `d6`, `eb 02` ...) and print the 4-byte reply |
 | `firmware extract/boot/flash` | bootloader recovery, below |
 
@@ -100,9 +125,10 @@ panel for y much above 64. A square logo on the left makes a clean two-column la
 (`--anchor top --scale 0.62 --offset 0,8`). The overlay style is
 stored per display mode; `overlay` sets image and GIF mode together.
 
-Still images and text are sent uncompressed (the image/text framebuffers do not decode RLE;
-~10 s per upload). GIFs are RLE-compressed and upload faster, so `logo --pulse` is quicker
-than a still logo.
+Everything is sent through the panel's GIF mode, RLE-compressed; stills are single-frame
+GIFs. Gigabyte's separate image/text framebuffers are unreliable on this firmware (a raw
+upload can complete and draw nothing) and cannot take compressed data, so a still logo
+uploads in ~2 s instead of ~12 s.
 
 ## Black screen? Firmware recovery
 
@@ -148,7 +174,9 @@ that.
   Unix socket) so the CLI and the service never interleave frames.
 - `aorus_lcd/render.py`, `content.py`: Pillow rendering to little-endian RGB565; add a
   content type by adding a builder.
-- `aorus_lcd/sensors.py`: NVML through `ctypes`. `daemon.py`: the service.
+- `aorus_lcd/sensors.py`: NVML through `ctypes`. `controller.py`: the service's single owner
+  of the panel (settings, uploads as background jobs, presets); `daemon.py`: the service loop;
+  `web.py` + `static/index.html`: the UI (stdlib only, no build step); `lighting.py`: GPU RGB;
   `firmware.py`: bootloader recovery.
 
 `/dev/i2c-N` is still available with `--transport i2c-dev` (needs `smbus2` and i2c-dev).

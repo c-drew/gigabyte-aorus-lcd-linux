@@ -25,7 +25,9 @@ fi
 "$prefix/bin/python" -c "import aorus_lcd.config as c; c.load('/etc/aorus-lcd/config.toml')"
 
 install -m 644 "$repo/systemd/aorus-lcd.service" /etc/systemd/system/aorus-lcd.service
+install -D -m 644 "$repo/desktop/aorus-lcd.desktop" /usr/local/share/applications/aorus-lcd.desktop
 systemctl daemon-reload
 systemctl enable aorus-lcd.service
 systemctl restart aorus-lcd.service
-echo "installed; logs: journalctl -u aorus-lcd -f"
+echo "installed: web UI at http://127.0.0.1:5090/ (\"AORUS LCD\" in your app launcher)"
+echo "logs: journalctl -u aorus-lcd -f"

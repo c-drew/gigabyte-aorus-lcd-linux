@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AORUS LCD</title>
+<style>
+  :root {
+    --bg: #09090b; --card: #131316; --card2: #1a1a1f; --line: #26262d; --text: #ececf1;
+    --muted: #8b8b96; --accent: #ff2a2a; --accent-soft: rgba(255, 42, 42, .14); --ok: #3ddc84;
+    --radius: 14px; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Inter, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px;
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; background: rgba(9,9,11,.92);
+           backdrop-filter: blur(8px); z-index: 5; }
+  .brand { font-weight: 800; letter-spacing: .14em; font-size: 15px; }
+  .brand b { color: var(--accent); }
+  .gpu { color: var(--muted); font-size: 12px; }
+  .grow { flex: 1; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+          font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+  .stat strong { color: var(--text); font-weight: 600; }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.on { color: var(--ok); border-color: rgba(61,220,132,.35); }
+  .pill.off { color: #ff7070; border-color: rgba(255,112,112,.35); }
+  main { display: grid; grid-template-columns: minmax(340px, 700px) minmax(340px, 1fr); gap: 20px;
+         padding: 20px 24px 40px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 12px 16px; flex-wrap: wrap; } }
+  .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+  .sticky { position: sticky; top: 76px; align-self: start; }
+  @media (max-width: 900px) { .sticky { position: static; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+  .card h2 { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+             display: flex; align-items: center; gap: 10px; }
+  .card h2 .grow { flex: 1; }
+  .bezel { background: #000; border-radius: 12px; padding: 14px; border: 1px solid #222;
+           box-shadow: 0 0 0 1px #000, 0 18px 50px -20px var(--accent-soft); }
+  .lcd { position: relative; width: 100%; aspect-ratio: 320 / 170; background: #000; overflow: hidden; border-radius: 3px; }
+  .lcd img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+  .lcd .placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: #555; font-size: 13px; }
+  .statsbox { position: absolute; border: 1.5px dashed rgba(255,255,255,.35); border-radius: 4px;
+              color: rgba(255,255,255,.55); font-size: 10px; padding: 2px 5px; pointer-events: none; }
+  .meta { display: flex; justify-content: space-between; gap: 12px; margin: 12px 2px 0; color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .field { display: grid; gap: 6px; margin-bottom: 14px; }
+  .field > span { color: var(--muted); font-size: 12px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  input[type=text], textarea, select { width: 100%; background: var(--card2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; }
+  textarea { resize: vertical; min-height: 64px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=color] { width: 44px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--card2); padding: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button { font: inherit; cursor: pointer; border-radius: 10px; padding: 9px 14px; border: 1px solid var(--line);
+           background: var(--card2); color: var(--text); }
+  button:hover { border-color: #3a3a44; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 650; }
+  button.primary:disabled { opacity: .45; cursor: default; }
+  button.ghost { background: none; }
+  .seg { display: flex; background: var(--card2); border: 1px solid var(--line); border-radius: 11px; padding: 3px; margin-bottom: 16px; overflow-x: auto; }
+  .seg button { flex: 1; border: 0; background: none; color: var(--muted); padding: 7px 10px; border-radius: 8px; white-space: nowrap; }
+  .seg button.active { background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+  .drop { border: 1.5px dashed #34343d; border-radius: 12px; padding: 18px; text-align: center; color: var(--muted);
+          cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop.over, .drop:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+  .drop strong { color: var(--text); }
+  .toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+  .toggle input { appearance: none; width: 38px; height: 22px; border-radius: 999px; background: #2b2b33; position: relative; margin: 0; transition: background .15s; cursor: pointer; }
+  .toggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .toggle input:checked { background: var(--accent); }
+  .toggle input:checked::after { transform: translateX(16px); }
+  .tags { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card2); color: var(--muted); font-size: 13px; }
+  .tag.on { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+  .progress { height: 6px; background: var(--card2); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .preset { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: var(--card2); }
+  .preset button { border: 0; background: none; padding: 6px 4px 6px 12px; }
+  .preset button.x { padding: 6px 10px 6px 6px; color: var(--muted); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hidden { display: none !important; }
+  .colors { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0;
+           background: #1f1f25; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; transition: .2s; z-index: 10; max-width: 90vw; }
+  #toast.show { opacity: 1; transform: translateX(-50%); }
+  #toast.err { border-color: #ff5a5a; }
+  footer { grid-column: 1 / -1; display: flex; gap: 16px; justify-content: center; color: var(--muted); font-size: 12px; }
+  footer a { color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="brand">AORUS <b>LCD</b></div>
+    <div class="gpu" id="gpu">connecting…</div>
+  </div>
+  <div class="grow"></div>
+  <div class="chips" id="stats"></div>
+  <span class="pill" id="conn">…</span>
+</header>
+
+<main>
+  <div class="col sticky">
+    <section class="card">
+      <h2>Panel <span class="grow"></span>
+        <label class="toggle" title="Panel power"><input type="checkbox" id="power"> <span class="muted">on</span></label>
+      </h2>
+      <div class="bezel">
+        <div class="lcd" id="lcd">
+          <img id="preview" alt="Preview of what the panel will show">
+          <div class="placeholder hidden" id="placeholder"></div>
+          <div class="statsbox hidden" id="statsbox">stats</div>
+        </div>
+      </div>
+      <div class="meta"><span id="showing">…</span><span id="estimate"></span></div>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="send">Send to panel</button>
+        <span class="muted" id="jobtext"></span>
+      </div>
+      <div class="progress hidden" id="progress"><div></div></div>
+    </section>
+
+    <section class="card">
+      <h2>Presets</h2>
+      <div class="presets" id="presets"><span class="muted">No presets yet: save the current look.</span></div>
+      <div class="row">
+        <input type="text" id="presetName" placeholder="Name this look" style="flex:1; min-width:160px" maxlength="40">
+        <button id="savePreset">Save</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0">A preset stores the screen, the stats overlay and the GPU lighting.</p>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>Screen</h2>
+      <div class="seg" id="types">
+        <button data-type="logo">Logo</button><button data-type="image">Image</button><button data-type="gif">GIF</button>
+        <button data-type="text">Text</button><button data-type="builtin">Built-in</button>
+      </div>
+
+      <div data-for="logo image gif" class="field">
+        <div class="drop" id="drop" tabindex="0" role="button">
+          <strong>Drop a file</strong> or click to choose<br>
+          <span id="dropHint" class="muted">SVG or PNG logo</span>
+          <div id="fileName" class="muted" style="margin-top:6px"></div>
+        </div>
+        <input type="file" id="file" class="hidden">
+      </div>
+
+      <div data-for="text" class="field"><span>Message</span>
+        <textarea id="text" maxlength="200" placeholder="hello from linux"></textarea></div>
+
+      <div data-for="text" class="field">
+        <label class="toggle"><input type="checkbox" id="wave"> Rainbow wave <span class="muted">(the panel's own text effect: animates and recolours the text)</span></label>
+      </div>
+      <div data-for="logo text" class="two">
+        <label class="field"><span>Colour</span><input type="color" id="color"></label>
+        <label class="field"><span>Background</span><input type="color" id="background"></label>
+      </div>
+
+      <div data-for="logo" class="field"><span>Size <span id="scaleVal" class="muted"></span></span>
+        <input type="range" id="scale" min="0.2" max="1" step="0.02"></div>
+      <div data-for="text" class="field"><span>Font size <span id="sizeVal" class="muted"></span></span>
+        <input type="range" id="size" min="12" max="96" step="2"></div>
+
+      <div data-for="logo" class="two">
+        <label class="field"><span>Position</span>
+          <select id="anchor"><option value="left">Left</option><option value="center">Center</option>
+            <option value="right">Right</option><option value="top">Top</option><option value="bottom">Bottom</option>
+            <option value="top-left">Top left</option><option value="top-right">Top right</option></select></label>
+        <label class="field"><span>Nudge x / y</span>
+          <div class="row"><input type="range" id="offx" min="-160" max="160" step="2" style="flex:1">
+            <input type="range" id="offy" min="-85" max="85" step="2" style="flex:1"></div></label>
+      </div>
+      <div data-for="logo" class="field">
+        <label class="toggle"><input type="checkbox" id="pulse"> Breathing glow</label>
+      </div>
+
+      <div data-for="image gif" class="field"><span>Fit</span>
+        <div class="tags" id="fit"><button class="tag" data-v="contain">Whole picture</button><button class="tag" data-v="cover">Fill the screen</button></div></div>
+
+      <div data-for="builtin" class="field"><span>Gigabyte's built-in screens</span>
+        <div class="tags" id="builtin"><button class="tag" data-v="0">Stats 1</button><button class="tag" data-v="1">Stats 2</button>
+          <button class="tag" data-v="2">Stats 3</button><button class="tag" data-v="6">Chibi clock</button></div></div>
+    </section>
+
+    <section class="card">
+      <h2>Stats overlay <span class="grow"></span><label class="toggle"><input type="checkbox" id="ovOn"></label></h2>
+      <div id="ovBody">
+        <div class="field"><span>Show (the panel rotates through them)</span><div class="tags" id="widgets"></div></div>
+        <div class="two">
+          <label class="field"><span>Colour</span><input type="color" id="ovColor"></label>
+          <label class="field"><span>Seconds per stat <span id="rotVal" class="muted"></span></span>
+            <input type="range" id="rotate" min="1" max="15"></label>
+        </div>
+        <div class="two">
+          <label class="field"><span>Position x <span id="pxVal" class="muted"></span></span><input type="range" id="posx" min="0" max="220"></label>
+          <label class="field"><span>Position y <span id="pyVal" class="muted"></span></span><input type="range" id="posy" min="0" max="90"></label>
+        </div>
+        <p class="muted" style="margin:0">Applied as you change it. Values are only sent when they move, to keep the GPU driver out of your frame times.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>GPU lighting <span class="grow"></span><label class="toggle" title="Let this tool manage the card's RGB"><input type="checkbox" id="rgbOn"></label></h2>
+      <div id="rgbBody">
+        <div class="two">
+          <label class="field"><span>Effect</span><select id="rgbMode"></select></label>
+          <div class="field"><span>Colours</span><div class="colors" id="rgbColors"></div></div>
+        </div>
+        <div class="two">
+          <label class="field"><span>Brightness <span id="brVal" class="muted"></span></span><input type="range" id="brightness" min="1" max="10"></label>
+          <label class="field"><span>Speed <span id="spVal" class="muted"></span></span><input type="range" id="speed" min="1" max="6"></label>
+        </div>
+        <div class="row" style="justify-content:space-between">
+          <label class="toggle"><input type="checkbox" id="rgbSave"> Save to card <span class="muted">(survives reboots)</span></label>
+          <button class="primary" id="rgbApply">Apply lighting</button>
+        </div>
+      </div>
+      <p class="muted" id="rgbOffNote" style="margin:0">Off: this tool leaves the card's RGB alone (use this if OpenRGB manages it).</p>
+    </section>
+  </div>
+
+  <footer>
+    <a href="#" id="reset">Reset to the config file</a>
+    <a href="https://github.com/c-drew/gigabyte-aorus-lcd-linux" target="_blank" rel="noopener">gigabyte-aorus-lcd-linux</a>
+  </footer>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const WIDGET_NAMES = {temp: "Temperature", clock: "Clock", usage: "Usage", fan: "Fan", vram_clock: "VRAM clock", vram: "VRAM", fps: "FPS", power: "Power"};
+const RGB_MODES = ["static", "breathing", "flashing", "dual-flashing", "color-cycle", "wave", "gradient", "color-shift", "tricolor", "dazzle", "off"];
+const MULTI = new Set(["color-shift", "tricolor", "dazzle"]);
+const HINTS = {logo: "SVG or PNG logo: it is recoloured", image: "PNG, JPG, WebP…", gif: "An animated GIF"};
+let S = null, content = null, overlay = null, lighting = null, fileNames = {}, polling = null;
+
+async function api(path, body, raw) {
+  const opts = {method: "POST", headers: {"X-Aorus-Lcd": "1"}};
+  if (raw) { opts.body = raw.data; opts.headers["X-Filename"] = raw.name; }
+  else { opts.body = JSON.stringify(body || {}); opts.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, opts);
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+  return r;
+}
+function toast(msg, err) {
+  const t = $("toast"); t.textContent = msg; t.className = "show" + (err ? " err" : "");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.className = "", 3200);
+}
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const hex = (c) => c.length === 4 ? "#" + [...c.slice(1)].map((x) => x + x).join("") : c;
+
+function setAccent(color) {
+  document.documentElement.style.setProperty("--accent", color);
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+  document.documentElement.style.setProperty("--accent-soft", `rgba(${r},${g},${b},.14)`);
+}
+
+// ---- status ---------------------------------------------------------------------
+async function refresh() {
+  const r = await fetch("/api/status"); S = await r.json();
+  $("gpu").textContent = S.gpu || "";
+  const p = S.panel;
+  $("conn").textContent = p.connected ? `panel · fw ${p.firmware}` : "panel offline";
+  $("conn").className = "pill " + (p.connected ? "on" : "off");
+  $("power").checked = !!p.on;
+  const names = {0: "stats screen 1", 1: "stats screen 2", 2: "stats screen 3", 3: "an image", 4: "text", 5: "a GIF", 6: "the chibi clock", 7: "the carousel"};
+  $("showing").textContent = p.connected ? `Now showing ${names[p.mode] || "?"}` : (p.error || "Waiting for the panel…");
+  const s = S.sample;
+  $("stats").innerHTML = s ? [["temp", s.temp + "°C"], ["usage", s.usage + "%"], ["power", s.power + " W"], ["clock", s.clock + " MHz"]]
+    .map(([k, v]) => `<span class="stat">${k} <strong>${v}</strong></span>`).join("") : "";
+  renderPresets();
+  renderJob();
+  return S;
+}
+function renderJob() {
+  const j = S.job, bar = $("progress");
+  const running = j.state === "running";
+  $("send").disabled = running;
+  bar.classList.toggle("hidden", !running);
+  bar.firstElementChild.style.width = j.total ? (100 * j.done / j.total) + "%" : "3%";
+  $("jobtext").textContent = running ? `Uploading ${j.done}/${j.total || "…"}` : j.state === "error" ? "Failed: " + j.error : "";
+  if (!running && polling) { clearInterval(polling); polling = null; if (j.state === "done") toast("On the panel"); if (j.state === "error") toast(j.error, true); }
+}
+function watchJob() { if (!polling) polling = setInterval(refresh, 500); }
+
+// ---- content ------------------------------------------------------------------------
+function showType() {
+  document.querySelectorAll("#types button").forEach((b) => b.classList.toggle("active", b.dataset.type === content.type));
+  document.querySelectorAll("[data-for]").forEach((el) => el.classList.toggle("hidden", !el.dataset.for.split(" ").includes(content.type)));
+  $("dropHint").textContent = HINTS[content.type] || "";
+  $("fileName").textContent = content.source ? (fileNames[content.source] || content.source.split("/").pop()) : "";
+  $("file").accept = content.type === "gif" ? ".gif" : content.type === "logo" ? ".svg,.png,.webp" : "image/*";
+  document.querySelectorAll("#fit .tag").forEach((t) => t.classList.toggle("on", t.dataset.v === content.fit));
+  document.querySelectorAll("#builtin .tag").forEach((t) => t.classList.toggle("on", +t.dataset.v === content.builtin_mode));
+}
+function fillContent() {
+  $("color").value = hex(content.color); $("background").value = hex(content.background);
+  $("scale").value = content.scale; $("size").value = content.size; $("text").value = content.text;
+  $("anchor").value = content.anchor; $("offx").value = content.offset[0]; $("offy").value = content.offset[1];
+  $("pulse").checked = content.animate === "pulse";
+  $("wave").checked = content.effect === "wave";
+  labels(); showType();
+}
+function labels() {
+  $("scaleVal").textContent = Math.round(content.scale * 100) + "%"; $("sizeVal").textContent = content.size + " px";
+  $("rotVal").textContent = overlay.rotate_seconds + " s"; $("pxVal").textContent = overlay.data_position[0];
+  $("pyVal").textContent = overlay.data_position[1]; $("brVal").textContent = lighting.brightness; $("spVal").textContent = lighting.speed;
+}
+const preview = debounce(async () => {
+  const ph = $("placeholder"), img = $("preview");
+  if (content.type === "builtin") { img.classList.add("hidden"); ph.classList.remove("hidden"); ph.textContent = "Gigabyte's built-in screen"; $("estimate").textContent = ""; return; }
+  if (["logo", "image", "gif"].includes(content.type) && !content.source) { img.classList.add("hidden"); ph.classList.remove("hidden"); ph.textContent = "Choose a file"; $("estimate").textContent = ""; return; }
+  try {
+    const r = await api("/api/preview", {content});
+    img.src = URL.createObjectURL(await r.blob());
+    img.classList.remove("hidden"); ph.classList.add("hidden");
+    $("estimate").textContent = `upload ≈ ${Math.round(+r.headers.get("X-Estimate-Seconds"))} s`;
+  } catch (e) { toast(e.message, true); }
+}, 250);
+function changed() { labels(); showType(); preview(); if (content.type === "logo" || content.type === "text") setAccent(hex(content.color)); }
+
+async function upload(file) {
+  try {
+    const r = await api("/api/media", null, {data: file, name: file.name});
+    const info = await r.json();
+    fileNames[info.source] = info.name; content.source = info.source;
+    if (content.type === "image" && info.frames > 1) content.type = "gif";
+    changed();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---- overlay + statsbox -----------------------------------------------------------------
+function statsBox() {
+  const box = $("statsbox"), on = overlay.enabled && overlay.widgets.length;
+  box.classList.toggle("hidden", !on);
+  const [x, y] = overlay.data_position;
+  Object.assign(box.style, {left: (x / 320 * 100) + "%", top: (y / 170 * 100) + "%", width: (Math.min(164, 320 - x) / 320 * 100) + "%", height: (52 / 170 * 100) + "%"});
+}
+function fillOverlay() {
+  $("ovOn").checked = overlay.enabled; $("ovColor").value = hex(overlay.color); $("rotate").value = overlay.rotate_seconds;
+  $("posx").value = overlay.data_position[0]; $("posy").value = overlay.data_position[1];
+  $("widgets").innerHTML = S.widgets.filter((w) => w !== "fps").map((w) =>
+    `<button class="tag ${overlay.widgets.includes(w) ? "on" : ""}" data-w="${w}">${WIDGET_NAMES[w]}</button>`).join("");
+  $("ovBody").classList.toggle("hidden", !overlay.enabled); statsBox(); labels();
+}
+const pushOverlay = debounce(async () => {
+  try { await api("/api/overlay", {overlay}); } catch (e) { toast(e.message, true); }
+}, 400);
+function overlayChanged() { fillOverlay(); pushOverlay(); }
+
+// ---- lighting ---------------------------------------------------------------------------------
+function fillLighting() {
+  $("rgbOn").checked = lighting.enabled; $("rgbBody").classList.toggle("hidden", !lighting.enabled);
+  $("rgbOffNote").classList.toggle("hidden", lighting.enabled);
+  $("rgbMode").value = lighting.mode; $("brightness").value = lighting.brightness; $("speed").value = lighting.speed;
+  $("rgbSave").checked = lighting.save_to_card;
+  const many = MULTI.has(lighting.mode);
+  const cols = many ? lighting.colors : lighting.colors.slice(0, 1);
+  $("rgbColors").innerHTML = cols.map((c, i) => `<input type="color" data-i="${i}" value="${hex(c)}">`).join("")
+    + (many && cols.length < 8 ? `<button class="ghost" id="addColor" title="Add colour">+</button>` : "")
+    + (many && cols.length > 1 ? `<button class="ghost" id="rmColor" title="Remove colour">−</button>` : "");
+  labels();
+}
+
+// ---- presets ------------------------------------------------------------------------------------
+function renderPresets() {
+  const el = $("presets");
+  if (!S.presets.length) { el.innerHTML = `<span class="muted">No presets yet: save the current look.</span>`; return; }
+  el.innerHTML = S.presets.map((n) => `<span class="preset"><button data-apply="${encodeURIComponent(n)}">${n.replace(/[<>&"]/g, "")}</button><button class="x" data-del="${encodeURIComponent(n)}" title="Delete">×</button></span>`).join("");
+}
+
+// ---- wiring ------------------------------------------------------------------------------------
+function wire() {
+  $("types").onclick = (e) => { const t = e.target.dataset.type; if (!t) return; content.type = t; if (t === "builtin" && ![0, 1, 2, 6].includes(content.builtin_mode)) content.builtin_mode = 0; changed(); };
+  for (const [id, key, num] of [["color", "color"], ["background", "background"], ["scale", "scale", 1], ["size", "size", 1], ["text", "text"], ["anchor", "anchor"]])
+    $(id).addEventListener("input", (e) => { content[key] = num ? +e.target.value : e.target.value; changed(); });
+  $("offx").oninput = (e) => { content.offset = [+e.target.value, content.offset[1]]; changed(); };
+  $("offy").oninput = (e) => { content.offset = [content.offset[0], +e.target.value]; changed(); };
+  $("pulse").onchange = (e) => { content.animate = e.target.checked ? "pulse" : "none"; changed(); };
+  $("wave").onchange = (e) => { content.effect = e.target.checked ? "wave" : "none"; changed(); };
+  $("fit").onclick = (e) => { if (e.target.dataset.v) { content.fit = e.target.dataset.v; changed(); } };
+  $("builtin").onclick = (e) => { if (e.target.dataset.v) { content.builtin_mode = +e.target.dataset.v; changed(); } };
+  const drop = $("drop");
+  drop.onclick = () => $("file").click();
+  drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") $("file").click(); };
+  $("file").onchange = (e) => e.target.files[0] && upload(e.target.files[0]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]); };
+  $("send").onclick = async () => { try { await api("/api/content", {content}); watchJob(); refresh(); } catch (e) { toast(e.message, true); } };
+  $("power").onchange = async (e) => { try { await api("/api/power", {on: e.target.checked}); } catch (err) { toast(err.message, true); } };
+
+  $("ovOn").onchange = (e) => { overlay.enabled = e.target.checked; overlayChanged(); };
+  $("widgets").onclick = (e) => { const w = e.target.dataset.w; if (!w) return;
+    overlay.widgets = overlay.widgets.includes(w) ? overlay.widgets.filter((x) => x !== w) : [...overlay.widgets, w]; overlayChanged(); };
+  $("ovColor").oninput = (e) => { overlay.color = e.target.value; overlayChanged(); };
+  $("rotate").oninput = (e) => { overlay.rotate_seconds = +e.target.value; overlayChanged(); };
+  $("posx").oninput = (e) => { overlay.data_position = [+e.target.value, overlay.data_position[1]]; overlayChanged(); };
+  $("posy").oninput = (e) => { overlay.data_position = [overlay.data_position[0], +e.target.value]; overlayChanged(); };
+
+  $("rgbMode").innerHTML = RGB_MODES.map((m) => `<option value="${m}">${m.replace("-", " ")}</option>`).join("");
+  $("rgbOn").onchange = async (e) => { lighting.enabled = e.target.checked; fillLighting();
+    if (!lighting.enabled) try { await api("/api/lighting", {lighting: {enabled: false}}); } catch (err) { toast(err.message, true); } };
+  $("rgbMode").onchange = (e) => { lighting.mode = e.target.value; fillLighting(); };
+  $("brightness").oninput = (e) => { lighting.brightness = +e.target.value; labels(); };
+  $("speed").oninput = (e) => { lighting.speed = +e.target.value; labels(); };
+  $("rgbSave").onchange = (e) => { lighting.save_to_card = e.target.checked; };
+  $("rgbColors").oninput = (e) => { if (e.target.dataset.i) lighting.colors[+e.target.dataset.i] = e.target.value; };
+  $("rgbColors").onclick = (e) => {
+    if (e.target.id === "addColor") lighting.colors = [...lighting.colors, "#ffffff"];
+    if (e.target.id === "rmColor") lighting.colors = lighting.colors.slice(0, -1);
+    if (e.target.id) fillLighting();
+  };
+  $("rgbApply").onclick = async () => { try { await api("/api/lighting", {lighting: {...lighting, enabled: true}}); toast("Lighting applied"); } catch (e) { toast(e.message, true); } };
+
+  $("savePreset").onclick = async () => {
+    const name = $("presetName").value.trim(); if (!name) return toast("Name the preset first", true);
+    try { await api("/api/presets", {action: "save", name}); $("presetName").value = ""; await refresh(); toast(`Saved “${name}”`); }
+    catch (e) { toast(e.message, true); }
+  };
+  $("presets").onclick = async (e) => {
+    const apply = e.target.dataset.apply, del = e.target.dataset.del;
+    try {
+      if (apply) { await api("/api/presets", {action: "apply", name: decodeURIComponent(apply)}); await load(); watchJob(); }
+      if (del) { await api("/api/presets", {action: "delete", name: decodeURIComponent(del)}); await refresh(); }
+    } catch (err) { toast(err.message, true); }
+  };
+  $("reset").onclick = async (e) => { e.preventDefault(); try { await api("/api/reset"); await load(); toast("Back to the config file"); } catch (err) { toast(err.message, true); } };
+}
+
+async function load() {
+  await refresh();
+  content = S.settings.content; overlay = S.settings.overlay; lighting = S.settings.lighting;
+  content.offset = content.offset || [0, 0];
+  fillContent(); fillOverlay(); fillLighting(); preview();
+  setAccent(hex(content.type === "logo" || content.type === "text" ? content.color : overlay.color));
+}
+wire();
+load().catch((e) => toast("Cannot reach aorus-lcd: " + e.message, true));
+setInterval(() => { if (!polling) refresh().catch(() => {}); }, 2000);
+</script>
+</body>
+</html>

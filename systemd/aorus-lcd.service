@@ -1,5 +1,5 @@
 [Unit]
-Description=Gigabyte AORUS LCD Edge View: content and live GPU stats
+Description=Gigabyte AORUS LCD Edge View: screen, live GPU stats, RGB, web UI on 127.0.0.1:5090
 Documentation=https://github.com/c-drew/gigabyte-aorus-lcd-linux
 After=systemd-modules-load.service nvidia-persistenced.service
 

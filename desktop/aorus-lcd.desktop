@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=AORUS LCD
+GenericName=GPU screen and lighting
+Comment=Gigabyte AORUS LCD Edge View: screen, live GPU stats and RGB
+Exec=xdg-open http://127.0.0.1:5090/
+Icon=video-display
+Categories=Settings;HardwareSettings;
+Keywords=gigabyte;aorus;lcd;gpu;rgb;

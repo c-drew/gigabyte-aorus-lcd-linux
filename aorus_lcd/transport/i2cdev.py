@@ -6,7 +6,7 @@ Fixed at 100 kHz by the driver. Some panels/firmware answer at that speed
 import glob
 import os
 
-from .base import LCD_ADDRESS, Transport, TransportError
+from .base import LCD_ADDRESS, RGB_ADDRESS, Transport, TransportError
 
 ADAPTER_PREFIX = "NVIDIA i2c adapter 1 at"
 
@@ -47,13 +47,15 @@ class I2cDevTransport(Transport):
 
     def write(self, address, data):
         self.check(address, len(data))
+        if address == RGB_ADDRESS:
+            raise ValueError("RGB needs the nvrm transport: at 100 kHz an RGB write can wedge the bus")
         try:
             self._bus.i2c_rdwr(self._msg.write(address, bytes(data)))
         except OSError as e:
             raise TransportError(f"write to {address:#04x} on i2c-{self.bus_number}: {e}") from e
 
     def read(self, address, length):
-        self.check(address, length)
+        self.check(address, length, write=False)
         if address != LCD_ADDRESS:
             raise ValueError("bootloader access needs the nvrm transport")
         msg = self._msg.read(address, length)
