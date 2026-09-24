@@ -125,10 +125,11 @@ panel for y much above 64. A square logo on the left makes a clean two-column la
 (`--anchor top --scale 0.62 --offset 0,8`). The overlay style is
 stored per display mode; `overlay` sets image and GIF mode together.
 
-Everything is sent through the panel's GIF mode, RLE-compressed; stills are single-frame
-GIFs. Gigabyte's separate image/text framebuffers are unreliable on this firmware (a raw
-upload can complete and draw nothing) and cannot take compressed data, so a still logo
-uploads in ~2 s instead of ~12 s.
+Everything is sent through the panel's GIF mode, RLE-compressed; a still is a GIF of two
+identical frames (a one-frame GIF leaves the panel on a garbled "Loading" screen).
+Gigabyte's separate image/text framebuffers are unreliable on this firmware (a raw upload
+can complete and draw nothing) and cannot take compressed data, so a still logo uploads in
+~3 s instead of ~12 s.
 
 ## Black screen? Firmware recovery
 

@@ -219,7 +219,7 @@ def still_upload(pixels, kind="image"):
     """GCC's image (mode 3) / text (mode 4) framebuffer upload, uncompressed.
     Kept for reference: on LCD firmware 1.3 these uploads can complete without
     drawing anything, and they do not decode RLE, so content.still() sends
-    stills as single-frame GIFs instead."""
+    stills as two-frame GIFs instead."""
     if len(pixels) != FRAME_BYTES:
         raise ValueError(f"expected {FRAME_BYTES} bytes of pixels")
     fb, mode = (FB_TEXT, MODE_TEXT) if kind == "text" else (FB_IMAGE, MODE_IMAGE)

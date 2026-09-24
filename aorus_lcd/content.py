@@ -11,10 +11,13 @@ def _logo(c):
 
 
 def still(im):
-    """Stills go out as a single-frame GIF. GIF mode is the one path that draws
-    reliably on this firmware (RLE, 4 KB sector erases); Gigabyte's raw
-    image/text framebuffer uploads can complete without drawing anything."""
-    return P.gif_upload([R.to_rgb565(im)], 100)
+    """Stills go out as a GIF of two identical frames. GIF mode is the one path
+    that draws reliably on this firmware (RLE, 4 KB sector erases); Gigabyte's
+    raw image/text framebuffer uploads can complete without drawing anything.
+    Two frames because a one-frame GIF leaves the panel on a garbled "Loading"
+    screen (tested on LCD firmware 1.3)."""
+    px = R.to_rgb565(im)
+    return P.gif_upload([px, px], 255)
 
 
 def build_logo(c):

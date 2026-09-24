@@ -177,10 +177,11 @@ def test_header_pause_covers_every_erase():
     assert P.still_upload(bytes(P.FRAME_BYTES)).frames[1][17] == P.ERASE_SECTOR
 
 
-def test_stills_are_sent_as_single_frame_gifs():
+def test_stills_are_sent_as_two_frame_gifs():
     from aorus_lcd import config as C, content
     up = content.build(C.ContentConfig(type="text", text="hi"))
-    assert up.kind == "gif" and up.mode == P.MODE_GIF and up.nframes == 1
+    assert up.kind == "gif" and up.mode == P.MODE_GIF
+    assert up.nframes == 2, "a one-frame GIF leaves the panel on a garbled Loading screen"
     assert len(up.frames) < 20, "RLE keeps a mostly-black still tiny"
 
 
