@@ -8,8 +8,12 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 prefix=/opt/aorus-lcd
 
+# Build from a scratch copy so root never writes into the checkout.
+src=$(mktemp -d)
+trap 'rm -rf "$src"' EXIT
+cp -r "$repo/pyproject.toml" "$repo/README.md" "$repo/LICENSE" "$repo/aorus_lcd" "$src/"
 python3 -m venv "$prefix"
-"$prefix/bin/pip" install --quiet --upgrade "$repo"
+"$prefix/bin/pip" install --quiet --upgrade "$src"
 ln -sf "$prefix/bin/aorus-lcd" /usr/local/bin/aorus-lcd
 
 install -d -m 755 /etc/aorus-lcd
