@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aorus-lcd"
+dynamic = ["version"]
+description = "Gigabyte AORUS RTX 5090 Master LCD Edge View on Linux: images, GIFs, logos, live GPU stats, firmware recovery"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10"]
+keywords = ["gigabyte", "aorus", "lcd", "edge-view", "rtx-5090", "nvidia", "linux", "i2c", "gpu"]
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+    "Environment :: No Input/Output (Daemon)",
+]
+
+[project.optional-dependencies]
+i2c-dev = ["smbus2"]
+firmware = ["dnfile"]
+test = ["pytest"]
+
+[project.scripts]
+aorus-lcd = "aorus_lcd.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/c-drew/gigabyte-aorus-lcd-linux"
+
+[tool.setuptools.packages.find]
+include = ["aorus_lcd*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "aorus_lcd.__version__" }

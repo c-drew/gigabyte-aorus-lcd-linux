@@ -1,0 +1,43 @@
+# aorus-lcd daemon configuration (/etc/aorus-lcd/config.toml)
+# Apply changes with: sudo systemctl reload aorus-lcd
+
+[panel]
+transport = "nvrm"        # nvrm: NVIDIA RM at 400 kHz, no root; i2c-dev: /dev/i2c-N at 100 kHz
+speed_khz = 400
+gpu = ""                  # PCI address, e.g. "0000:01:00.0"; empty = the Gigabyte card
+
+[content]
+# logo | image | gif | text | builtin | none
+type = "logo"
+source = "/etc/aorus-lcd/logo.svg"   # SVG (needs rsvg-convert) or any image Pillow opens
+color = "#ff0000"         # logos are recoloured: every visible pixel becomes this colour
+background = "#000000"
+# The firmware draws the stats block (label + big value) in the right part of the
+# panel (from x~146), so a square logo on the left makes a clean two-column
+# layout. For a wide wordmark instead: anchor = "top", scale = 0.62, offset = [0, 8].
+scale = 0.7               # fraction of the 320x170 panel the logo may fill
+anchor = "left"           # center, top, bottom, left, right, top-left, ...
+offset = [20, 0]
+animate = "pulse"         # "pulse" = breathing glow (GIF, compressed, uploads faster); "none" = still
+
+# type = "text"
+# text = "hello"
+# size = 32
+
+# type = "builtin"
+# builtin_mode = 0        # 0-2 Gigabyte's stat screens, 6 chibi clock
+
+[overlay]
+# The panel firmware's own stats widgets, drawn over the content and fed from NVML.
+enabled = true
+widgets = ["temp", "usage", "power", "clock"]   # also: fan, vram, vram_clock
+rotate_seconds = 3        # the firmware shows one widget at a time
+color = "#ff0000"
+data_position = [146, 64]  # stats block runs right and down from here; y much above 64 gets clipped
+image_position = [0, 0]
+update_seconds = 1.0
+refresh_seconds = 30.0    # resend unchanged values this often
+# Each update is a 256-byte I2C write (~6 ms of NVIDIA driver time), so values
+# are only sent when they move at least this much:
+min_change = { temp = 1, clock = 15, usage = 2, fan = 50, vram_clock = 15, vram = 1, power = 3 }
+clear_on_exit = true

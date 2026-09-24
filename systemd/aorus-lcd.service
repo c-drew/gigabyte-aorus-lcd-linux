@@ -1,0 +1,21 @@
+[Unit]
+Description=Gigabyte AORUS LCD Edge View: content and live GPU stats
+Documentation=https://github.com/c-drew/gigabyte-aorus-lcd-linux
+After=systemd-modules-load.service nvidia-persistenced.service
+
+[Service]
+Type=simple
+ExecStart=/opt/aorus-lcd/bin/aorus-lcd daemon --config /etc/aorus-lcd/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# /dev/nvidiactl and /dev/nvidia* are world-accessible; no root needed.
+DynamicUser=yes
+StateDirectory=aorus-lcd
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
