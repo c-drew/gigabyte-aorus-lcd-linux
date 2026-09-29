@@ -5,3 +5,5 @@ __pycache__/
 build/
 dist/
 *.bin
+# Gigabyte updaters and firmware images: never distributed here
+firmware/
