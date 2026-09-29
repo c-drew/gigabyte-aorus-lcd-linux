@@ -1,0 +1,26 @@
+#!/bin/bash
+# aorus-lcd-request GET|POST <url> [max-seconds]
+# Talks to the local aorus-lcd service for the bar plugin. A POST body is read
+# as one line of JSON from stdin, so it never appears in process arguments.
+# Only loopback URLs are accepted (the service only listens there), and the
+# response is capped before it reaches the shell's long-lived QML process.
+set -o pipefail
+export LC_ALL=C
+MAX_BYTES=1048576
+
+method=${1:-}
+url=${2:-}
+max_time=${3:-10}
+case "$method" in GET|POST) ;; *) exit 2 ;; esac
+case "$url" in http://127.0.0.1:*/*|http://localhost:*/*|'http://[::1]:'*/*) ;; *) exit 2 ;; esac
+case "$max_time" in ""|*[!0-9]*) exit 2 ;; esac
+
+args=(--disable --silent --show-error --fail-with-body --connect-timeout 2 --max-time "$max_time"
+      --max-filesize "$MAX_BYTES" --header "X-Aorus-Lcd: 1")
+if [[ $method == POST ]]; then
+  IFS= read -r body || true
+  printf '%s' "$body" | curl "${args[@]}" --request POST --header "Content-Type: application/json" \
+    --data-binary @- "$url" | head -c "$MAX_BYTES"
+else
+  curl "${args[@]}" "$url" | head -c "$MAX_BYTES"
+fi

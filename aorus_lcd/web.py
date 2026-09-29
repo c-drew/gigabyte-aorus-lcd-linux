@@ -82,8 +82,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ctl.save_media(self.headers.get("X-Filename", ""), self._body()))
             data = self._json()
             if self.path == "/api/preview":
-                image, mime, seconds = ctl.preview(data.get("content", {}))
-                return self._send(200, image, mime, {"X-Estimate-Seconds": f"{seconds:.1f}"})
+                image, mime, seconds, info = ctl.preview(data.get("content", {}))
+                return self._send(200, image, mime, {"X-Estimate-Seconds": f"{seconds:.1f}",
+                                                     "X-Render-Info": json.dumps(info)})
             if self.path == "/api/content":
                 ctl.start_content(data.get("content", {}))
                 return self._send(202, {"ok": True})
@@ -93,6 +94,8 @@ class Handler(BaseHTTPRequestHandler):
                 ctl.set_lighting(data.get("lighting", {}))
             elif self.path == "/api/power":
                 ctl.set_power(bool(data.get("on")))
+            elif self.path == "/api/screensaver":
+                {"next": ctl.rotate_now}[data.get("action")]()
             elif self.path == "/api/reset":
                 ctl.reset()
             elif self.path == "/api/presets":
@@ -105,7 +108,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(409, {"error": str(e)})
         except (ValueError, KeyError, TypeError) as e:
             self._send(400, {"error": str(e)})
-        except (TransportError, OSError) as e:
+        except (TransportError, OSError, RuntimeError) as e:
             self._send(503, {"error": str(e)})
 
 

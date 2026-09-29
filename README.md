@@ -15,7 +15,9 @@ aorus-lcd logo omarchy.svg --color '#ff0000'          # any SVG/PNG, recoloured
 aorus-lcd gif party.gif
 aorus-lcd text "hello from linux" --color '#ff0000'
 aorus-lcd overlay --widgets temp,usage,power,clock    # the panel's own stats widgets
+aorus-lcd ttfx --effects decrypt,burn                 # the Omarchy screensaver, on the panel
 sudo scripts/install.sh                               # keep it that way on every boot
+scripts/install-omarchy-plugin.sh                     # a control in the Omarchy top bar
 ```
 
 ## Status
@@ -58,6 +60,32 @@ Without the service, `aorus-lcd gui` starts the same thing in the foreground and
 It only listens on 127.0.0.1, rejects requests from other sites (Host check + a required
 header), and grants nothing a local program could not already do.
 
+## The Omarchy screensaver
+
+The panel can play the [ttfx](https://github.com/omacom-io/ttfx) effects of the Omarchy
+screensaver over the Omarchy logo (or any text). The panel cannot be streamed to (its I2C
+link moves ~40 KB/s; a frame is 106 KB), so each effect is rendered ahead of time: ttfx's
+deterministic frame dump is drawn as a text grid (4x8-px cells, glyphs drawn to the pixel),
+RLE-encoded and stored in the panel's flash, which then plays it on its own with no ongoing
+CPU, GPU or bus cost.
+
+- **One loop** (`rotate_minutes = 0`): the chosen effects, back to back, as one animation.
+- **A playlist** (`rotate_minutes >= 15`): one effect at a time. At each swap the next effect
+  is written to the panel's other animation bank, then switched in; meanwhile the screen
+  holds its last frame for a minute or two (no Loading screen). It is not written while the
+  animation plays: the flash erase then runs at a speed that depends on the animation, too
+  unpredictable to time, and a mistimed upload hangs the panel until a power cycle. Each
+  playlist loop is at most 3 MB. Every swap erases one bank of the panel's flash, which is
+  rated for ~100,000 erases: hourly swaps last ~23 years, every 15 minutes ~6. The web UI
+  shows the wear so far.
+- **Border**: pixels kept clear on each side, if the panel's bezel hides its edges from where
+  you sit.
+
+The panel draws a frame in ~55 ms, so animations play at ~18 fps and a loop holds at most
+254 frames: ~14 s. (The firmware plays frames 1..N-1 of at most 255; frame 0 must never play,
+as its start is computed from Gigabyte's own animation, so the loop never uses it.) Stats, the playlist, borders and presets can be set in
+the web UI or from the Omarchy bar widget (`scripts/install-omarchy-plugin.sh`).
+
 ## GPU RGB lighting
 
 The card's RGB Fusion 2 controller (0x75) sits on the same I2C bus, so the tool can set it
@@ -94,6 +122,11 @@ journalctl -u aorus-lcd -f
 sudo systemctl reload aorus-lcd                 # after editing /etc/aorus-lcd/config.toml
 ```
 
+The screensaver renders with the system's ttfx (Omarchy's package). To give the panel a
+different build without touching the desktop screensaver's, install it alongside:
+`sudo scripts/install.sh --ttfx ~/src/ttfx/target/release/ttfx` (it stays until you remove
+`/opt/aorus-lcd/bin/ttfx`). ttfx 0.5.0 draws the same frames as 0.3.2 for every effect here.
+
 The service runs as an unprivileged dynamic user. It uploads your content only when it
 changed (the panel keeps its image across power cycles, and every upload rewrites its
 flash), turns on the stats overlay, and keeps it fed. See
@@ -108,6 +141,7 @@ flash), turns on the stats overlay, and keeps it fed. See
 | `image FILE [--fit contain\|cover]` | a picture, fitted to 320x170 |
 | `gif FILE` | an animated GIF |
 | `text "..." [--color C] [--size N] [--wave]` | a text message; `--wave` = the panel's own animated rainbow wave |
+| `ttfx [--effects a,b] [--fps N] [--hold MS] [--text FILE] [--list]` | the Omarchy screensaver's ttfx effects as a looping animation (`--list` shows the effects) |
 | `overlay [--widgets ...] [--color C] [--data-pos X,Y] [--off]` | the firmware's stats widgets: `temp clock usage fan vram_clock vram fps power` |
 | `stats` | feed live values to the overlay in the foreground |
 | `power on\|off`, `mode N` | panel power; 0-2 Gigabyte stat screens, 3 image, 4 text, 5 gif, 6 chibi clock |
@@ -162,6 +196,36 @@ this repository.
 hold the I2C bus, and only a full power-off (PSU switch) releases it. This tool never does
 that.
 
+## How uploads stay safe
+
+LCD firmware 1.3, disassembled and measured on the panel:
+
+- Outside an upload the firmware runs byte 0 of **every** 256-byte frame as a command, magic
+  or not. Pixel data must never arrive when no upload is open.
+- After the F1 header the panel erases its flash, one sector per pass of its main loop. With
+  playback held that is a steady ~27 ms a sector; while an animation plays it depends on the
+  animation (82 ms behind a light loop, ~260 ms behind decrypt). A chunk sent during the
+  erase lands on flash not yet erased, and 30 s after the erase without data the panel
+  closes the upload, after which chunks would run as commands. So uploads hold playback
+  (F9) and wait for the erase at the held rate. Uploads written while the animation played
+  failed when the erase ran slow: the panel NACKed and then hung until a power cycle, and
+  asking it about the erase meanwhile froze it (white screen).
+- After a reset the panel cycles its own slideshow (Gigabyte's boot animation, the image and
+  text slots, the chibi) until the host sends a sensor feed. The service sends one and brings
+  back the content, which the flash kept.
+- During an upload every command is answered `d6 13 01 02`; one command after the erase closes
+  the upload. Each question gets exactly one read, ~0.4 s later: an early or second read
+  wedges the panel's I2C interface. So: one question just after F1 (it confirms the upload
+  is open), nothing while data flows, one question after the last chunk (a normal reply
+  proves every chunk was written; otherwise the old content stays), then F2 END.
+- F2 END restores the mode saved by the last BEGIN marker and flips the animation bank only
+  if that was GIF mode. The BEGIN marker shows Gigabyte's Loading screen, so uploads skip it,
+  and the first END after power-up (nothing saved) is repaired with BEGIN + END.
+- F1 applies its frame count and delay to the animation on screen at once.
+- The panel has two flash chips: GIF uploads (F1 flag 2) go to one used only for custom
+  animations, in two 16 MB banks; everything else (Gigabyte's screens, the image and text
+  slots) is on the other.
+
 ## How it works
 
 - `aorus_lcd/transport/nvrm.py`: root client -> `NV01_DEVICE_0` -> `NV20_SUBDEVICE_0` ->
@@ -193,6 +257,11 @@ that.
   the panel firmware's flash-erase analysis and the firmware updater's IAP flow.
 - [PrivateGER/Gigabyte-Aorus-LCD-Driver](https://github.com/PrivateGER/Gigabyte-Aorus-LCD-Driver):
   an independent Linux RM transport for the 5080 Master ICE.
+- [markcuda/Omarchy-Font](https://github.com/markcuda/Omarchy-Font) by Mark Cuda (MIT, bundled
+  in `aorus_lcd/fonts/` with its license): the Omarchy wordmark as a font, used to draw your text
+  in the logo's letters. [ttfx](https://github.com/omacom-io/ttfx) (MIT) renders the effects.
+  Omarchy, its logo and `omarchy.ttf` are by DHH and 37signals and are read from the system,
+  not bundled.
 - NVIDIA's [open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules)
   headers for the RM ABI.
 

@@ -29,15 +29,53 @@ OP_GET_MODE = 0xDE        # read 4
 OP_GET_DISPLAY = 0xDF     # read 4
 OP_GET_TEMPLATE = 0xEB    # [5] type, read 4 (EB 03 doubles as presence probe)
 OP_GET_TEMPLATE2 = 0xED   # read 4
+OP_GIF_HOLD = 0xF9        # latch custom-GIF playback off until the next upload ends
+OP_GET_BANK = 0xD8        # read 4: [D8, GIF bank on screen (1|2), ...]
 
 # Display modes (E5 / DE)
 MODE_FAITH1, MODE_FAITH2, MODE_FAITH3 = 0, 1, 2
 MODE_IMAGE, MODE_TEXT, MODE_GIF, MODE_CHIBI = 3, 4, 5, 6
+# After a reset the panel plays a standalone slideshow (Gigabyte's boot
+# animation, the image and text slots, the chibi) until the host sends an E3
+# sensor feed. DE reports it as 11, which parse_mode maps to 10.
+MODE_SLIDESHOW = 10
 
 # Upload framebuffer targets (F1 header)
 FB_IMAGE = 0x01300000
 FB_TEXT = 0x01320000
 FB_GIF = 0x00000000       # live buffer: SetMode 5 must come BEFORE streaming
+
+# Where uploads land (LCD firmware 1.3, disassembled). The panel has two SPI
+# flash chips, picked per upload by the F1 flag: flag 1 (image/text) writes
+# the chip that also holds Gigabyte's built-in screens and boot animation;
+# flag 2 (GIF) writes a second chip used only for custom animations. That chip
+# is double-buffered: target 0 goes to whichever bank is not on screen
+# (0x00000000 or 0x01000000, 16 MB each; D8 reports the live one) and F2(END)
+# in GIF mode flips the bank. A bank holds 16 MB, but the upload timing below
+# limits an animation to 1.9 MB: the wait for the erase must outlast a slow
+# erase, and it is silent. The panel counts a sensor feed (E3) as a sign that
+# the PC's software is running: after ~25 s without one it drops back to its
+# own slideshow (measured 2026-09-28: 25-26 s, every time), even in the middle
+# of an upload's erase, and an upload interrupted that way hangs the panel
+# until a power cycle. Uploads send a feed just before they start (the data
+# itself keeps the panel content), so the erase wait must end well inside
+# those 25 s: 1.9 MB is 465 sectors, a 19.6 s wait.
+GIF_BANK_BYTES = 0x01000000
+GIF_MAX_PAYLOAD = 1_900_000
+HOST_SILENCE_SECONDS = 25        # without a sensor feed for this long: the panel's own slideshow
+# Playback shows frames 1..N-1 and wraps to 1: frame 0 is never shown, and
+# must not be. The firmware finds a frame's data from the one before it, except
+# frame 0's start, which it computes once at boot from the frame count of
+# Gigabyte's built-in animation on the other flash chip. With 256 frames the
+# byte-sized index wraps from 255 to 0 and plays frame 0 anyway: decoded from
+# the wrong place, it stalls the panel for seconds once a loop (it NACKs, and
+# Gigabyte's animation shows meanwhile; seen 2026-09-28). So at most 255.
+GIF_MAX_FRAMES = 255
+GIF_MAX_PLAYED = GIF_MAX_FRAMES - 1        # frame 0 is a placeholder
+# Payloads are padded to at least this size (the reader stops at the last
+# frame's end), so the flash erase after F1 always lasts long enough for the
+# one status check that is safe to make during an upload.
+GIF_MIN_PAYLOAD = 0x8000
 
 # Frame-table pixel formats
 FMT_RAW = 1               # uncompressed LE RGB565 (what GCC uses for image/text)
@@ -45,6 +83,13 @@ FMT_RLE = 3               # Compress_RLE (what GCC uses for gif frames)
 
 # Pacing observed in GCC captures (seconds)
 PACE_BEGIN, PACE_HEADER, PACE_CHUNK = 0.5, 1.0, 0.01
+# The firmware takes each chunk inside its I2C interrupt: when the 256th byte
+# lands it copies the chunk to a work buffer at once, and its main loop writes
+# it to flash (~1 ms) while the next one is still on the wire (~6 ms). So
+# chunks can go back to back while playback is held. If the main loop ever falls
+# behind, a whole chunk is lost (never mixed), the upload's final check sees it,
+# and the upload is repeated at GCC's pace.
+FAST_CHUNK_DELAY = 0.0
 
 # F1 header byte 17 picks how the panel erases its flash before writing
 # (EKYavsil's firmware analysis): 1 = 4 KB sectors, 2 = 64 KB blocks. GCC uses
@@ -53,7 +98,27 @@ PACE_BEGIN, PACE_HEADER, PACE_CHUNK = 0.5, 1.0, 0.01
 # stuck on "Loading"). This project always uses 4 KB sectors.
 ERASE_SECTOR, ERASE_BLOCK = 1, 2
 ERASE_UNIT = {ERASE_SECTOR: 0x1000, ERASE_BLOCK: 0x10000}
-ERASE_SECONDS = {ERASE_SECTOR: 0.1, ERASE_BLOCK: 0.6}     # generous per-erase budget
+# The wait between F1 and the first chunk has a window on both sides:
+# - not before the last erase: the firmware erases one unit per pass of its
+#   main loop, and a chunk that arrives earlier ends the erase phase, then
+#   lands at the erase offset instead of the start (frame table missing);
+# - not later than 30 s after it: the firmware then closes the upload as
+#   abandoned (its power-on limit), and the chunks that follow would run as
+#   commands.
+# Measured on LCD firmware 1.3 with GIF playback held (panel.upload does
+# that): 15 sectors took 0.5-1.0 s, 171 took 4.7-5.2 s, about 27 ms each plus
+# ~0.5 s. The wait budgets 40 ms a sector (+50%); at GIF_MAX_PAYLOAD it still
+# starts the data within 25 s of the erase end on a panel erasing at 20 ms.
+ERASE_SECONDS = {ERASE_SECTOR: 0.04, ERASE_BLOCK: 1.0}
+ERASE_BASE_SECONDS = 1.0
+DATA_TIMEOUT_SECONDS = 30.0
+
+# There is no way to write an animation while the one on screen plays (tried
+# on 2026-09-28, removed): the erase then runs one sector per pass of the
+# firmware's main loop, at a speed set by that animation (82 ms a sector
+# behind a light loop, ~260 ms behind decrypt), so no fixed wait fits; data
+# that arrived early made the panel NACK and hang until a power cycle, and
+# asking it about the erase meanwhile froze it. Uploads hold playback (F9).
 
 # Overlay widgets (E1 flag order == bit order used by DF read-back)
 WIDGETS = ("temp", "clock", "usage", "fan", "vram_clock", "vram", "fps", "power")
@@ -82,9 +147,9 @@ def erase_count(payload_len, erase_mode):
 
 
 def header_pause(payload_len, erase_mode):
-    """Seconds to wait after F1 so every erase finishes before data arrives
-    (GCC always waits 1.0 s, too short for big uploads)."""
-    return max(PACE_HEADER, 0.3 + erase_count(payload_len, erase_mode) * ERASE_SECONDS[erase_mode])
+    """Seconds to wait after F1 so every erase finishes before data arrives,
+    and data still arrives before the firmware gives up on the upload."""
+    return max(PACE_HEADER, ERASE_BASE_SECONDS + erase_count(payload_len, erase_mode) * ERASE_SECONDS[erase_mode])
 
 
 def upload_header(fb_addr, payload_len, flag=1, nframes=0, delay_ms=0, erase_mode=None):
@@ -227,10 +292,30 @@ def still_upload(pixels, kind="image"):
 
 
 def gif_upload(frames, delay_ms):
-    """Animated upload from LE-RGB565 frames (always RLE, like GCC)."""
-    blobs = [rle_encode_frame(f) for f in frames]
+    """Animated upload from LE-RGB565 frames (always RLE, like GCC). Frame 0
+    (never shown) repeats the first, so every frame plays."""
+    if len(frames) > GIF_MAX_PLAYED:
+        raise ValueError(f"the panel plays at most {GIF_MAX_PLAYED} frames; this animation has {len(frames)}")
+    encoded = [rle_encode_frame(f) for f in frames]
+    return gif_upload_encoded(encoded[:1] + encoded, delay_ms)
+
+
+def gif_payload_size(blobs):
+    return 2 + 10 * len(blobs) + sum(len(b) for b in blobs)
+
+
+def gif_upload_encoded(blobs, delay_ms):
+    """Animated upload from RLE-encoded frames. The firmware plays frames
+    1..N-1 in a loop (frame 0 is never shown), every `delay_ms` or as fast as
+    it can decode, whichever is slower."""
+    if not 2 <= len(blobs) <= GIF_MAX_FRAMES:
+        raise ValueError(f"the panel plays 2..{GIF_MAX_FRAMES} frames; this animation has {len(blobs)}")
     payload = frame_table([len(b) for b in blobs], FMT_RLE) + b"".join(blobs)
-    return Upload("gif", FB_GIF, MODE_GIF, payload, flag=2, nframes=len(frames),
+    payload += bytes(max(0, GIF_MIN_PAYLOAD - len(payload)))
+    if len(payload) > GIF_MAX_PAYLOAD:
+        raise ValueError(f"animation is {len(payload)} bytes; the panel takes at most "
+                         f"{GIF_MAX_PAYLOAD} in one upload")
+    return Upload("gif", FB_GIF, MODE_GIF, payload, flag=2, nframes=len(blobs),
                   delay_ms=min(255, max(1, int(delay_ms))))
 
 
@@ -302,6 +387,14 @@ def sensor_feed(s):
 
 def save():
     return cmd_frame(OP_SAVE)
+
+
+def gif_hold():
+    """F9: set the firmware's GIF-failure latch, so GIF mode draws nothing
+    (F2 END clears it). Sent before a GIF upload: the GIF bank on screen is
+    then never decoded during the upload, which keeps flash erases fast, keeps
+    the second flash chip selected, and cannot crash on a damaged bank."""
+    return cmd_frame(OP_GIF_HOLD)
 
 
 def query(opcode, tail=b""):

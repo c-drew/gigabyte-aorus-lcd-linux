@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import config as C
 from .controller import Controller
-from .panel import Panel
+from .panel import Panel, PanelBusy
 from .transport import TransportError, find_gpu, open_transport
 
 log = logging.getLogger("aorus-lcd")
@@ -79,9 +79,14 @@ def run(config_path=C.DEFAULT_PATH, force=False, web=True, on_ready=None):
                     ctl.reload(load_config(config_path), C.file_digest(config_path))
                     log.info("config reloaded")
         except TransportError as e:
-            ctl.detach()
-            log.warning("bus error: %s; retrying in 5s", e)
-            for _ in range(50):
+            # An upload left open by a process that died: stay quiet so the
+            # panel can give up on it, rather than feeding it commands.
+            wait = 90 if isinstance(e, PanelBusy) else 5
+            ctl.detach(reason="the panel is still inside an upload that was cut off; leaving it "
+                              f"alone for {wait} s so it can close it" if isinstance(e, PanelBusy)
+                       else f"cannot reach the panel ({e}); retrying")
+            log.warning("bus error: %s; retrying in %ds", e, wait)
+            for _ in range(wait * 10):
                 if stop["now"]:
                     break
                 time.sleep(0.1)

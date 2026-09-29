@@ -110,6 +110,48 @@ def cmd_content(args):
               f"{time.monotonic() - start:.1f}s")
 
 
+def cmd_ttfx(args):
+    from . import screensaver as S
+    from . import ttfx
+    binary = ttfx.find_binary(args.ttfx)
+    if args.list:
+        print(f"ttfx {ttfx.version(binary)} ({binary}):")
+        print("  " + " ".join(ttfx.effects(binary)))
+        return
+    text = None
+    if args.text:
+        text = sys.stdin.read() if args.text == "-" else open(args.text, encoding="utf-8").read()
+    effects = ttfx.effects(binary) if args.effects == "all" else (
+        args.effects.split(",") if args.effects else S.DEFAULT_EFFECTS)
+
+    def progress(effect, n, total):
+        if sys.stderr.isatty():
+            print(f"\r  rendering {effect:<16} {n + 1}/{total}", end="", file=sys.stderr, flush=True)
+    anim = S.build(text, effects, args.fps, args.seed, args.hold, int(args.budget * 1e6), binary,
+                   args.shuffle, progress, frames_exact=args.frames, delay_ms=args.delay or S.frame_delay(args.fps),
+                   scale=args.scale)
+    if sys.stderr.isatty():
+        print("\r" + " " * 40 + "\r", end="", file=sys.stderr)
+    upload = anim.upload()
+    print(f"ttfx {ttfx.version(binary)}: {len(anim.clips)} effects, {len(anim.frames)} frames at "
+          f"{anim.fps} fps = {anim.seconds:.1f}s loop, {anim.size / 1e6:.2f} MB")
+    print("  " + ", ".join(f"{c.effect} {len(c.blobs) / anim.fps:.1f}s" for c in anim.clips))
+    if anim.skipped:
+        print(f"  left out (the panel plays at most {P.GIF_MAX_PLAYED} frames): "
+              + ", ".join(f"{e} ({n} frames)" for e, n in anim.skipped))
+    if args.preview:
+        anim.save_preview(args.preview)
+        print(f"wrote {args.preview}")
+        return
+    print(f"uploading, about {upload.estimate_seconds(args.chunk_delay) / 60:.1f} min "
+          "(the panel keeps its current picture until it is done) ...")
+    with _panel(args) as p:
+        start = time.monotonic()
+        p.carousel([])
+        p.upload(upload, args.chunk_delay, progress=_progress)
+        print(f"done in {(time.monotonic() - start) / 60:.1f} min")
+
+
 def cmd_overlay(args):
     with _panel(args) as p:
         if args.off:
@@ -186,9 +228,18 @@ def cmd_gui(args):
     daemon.run(args.config, web=True, on_ready=ready)
 
 
+# Only the panel's questions: any other opcode would act (F1 opens an upload
+# and erases flash, AA writes the config, F9 blanks the screen, ...).
+READ_OPS = (P.OP_GET_FW, P.OP_GET_BANK, P.OP_GET_MODE, P.OP_GET_DISPLAY, P.OP_GET_TEMPLATE,
+            P.OP_GET_TEMPLATE2)
+
+
 def cmd_query(args):
+    raw = bytes.fromhex(args.hex)
+    if not raw or raw[0] not in READ_OPS:
+        raise SystemExit("query only asks the panel's read questions: "
+                         + " ".join(f"{op:02x}" for op in READ_OPS))
     with _panel(args) as p:
-        raw = bytes.fromhex(args.hex)
         print(p.query(raw[0], raw[1:]).hex(" "))
 
 
@@ -271,7 +322,7 @@ def build_parser():
     def content_cmd(name, help_):
         p = sub.add_parser(name, help=help_)
         p.add_argument("--preview", metavar="PNG", help="render to a PNG instead of uploading")
-        p.add_argument("--chunk-delay", type=float, default=P.PACE_CHUNK, metavar="SEC")
+        p.add_argument("--chunk-delay", type=float, default=P.FAST_CHUNK_DELAY, metavar="SEC")
         p.add_argument("--background", "--bg", dest="background", metavar="COLOR")
         p.set_defaults(func=cmd_content, frame_delay=None)
         return p
@@ -296,6 +347,29 @@ def build_parser():
     p.add_argument("--size", type=int)
     p.add_argument("--font")
     p.add_argument("--wave", action="store_true", help="the panel's rainbow wave text effect")
+
+    p = sub.add_parser("ttfx", help="the Omarchy screensaver: ttfx text effects, rendered and "
+                                    "stored on the panel as one looping animation")
+    p.add_argument("--effects", metavar="LIST",
+                   help="comma list of ttfx effects in play order, or 'all' (default: a curated set)")
+    p.add_argument("--text", metavar="FILE", help=f"text to animate, - for stdin (default: {'/usr/share/omarchy/logo.txt'})")
+    p.add_argument("--fps", type=int, default=18, choices=(18, 9, 6, 3), help="frame rate (default 18, the panel's best)")
+    p.add_argument("--scale", type=int, default=0, choices=range(9), help="text size 1..8, 0 = the biggest that fits")
+    p.add_argument("--hold", type=int, default=1000, metavar="MS", help="pause on each finished effect")
+    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--shuffle", action="store_true", help="play the effects in a random (seeded) order")
+    p.add_argument("--budget", type=float, default=1.9, metavar="MB",
+                   help="animation size; effects that do not fit are left out (default and max 1.9; "
+                        "uploads take about 1.5 min per MB)")
+    p.add_argument("--ttfx", default="", metavar="PATH", help="ttfx binary (default: ttfx on PATH)")
+    p.add_argument("--list", action="store_true", help="list the effects this ttfx has")
+    p.add_argument("--preview", metavar="GIF", help="write an animated GIF instead of uploading")
+    p.add_argument("--chunk-delay", type=float, default=P.FAST_CHUNK_DELAY, metavar="SEC")
+    p.add_argument("--frames", type=int, metavar="N",
+                   help="make the loop exactly N frames (pads with the final frame)")
+    p.add_argument("--delay", type=int, default=0, metavar="MS",
+                   help="panel frame delay (default: matched to --fps)")
+    p.set_defaults(func=cmd_ttfx)
 
     p = sub.add_parser("overlay", help="the firmware's GPU-stats widgets over the content")
     p.add_argument("--widgets", default="temp,usage,power", help=f"comma list of: {', '.join(P.WIDGETS)}")

@@ -109,17 +109,19 @@ def test_still_upload_is_uncompressed():
 def test_gif_upload_shape():
     frames = [bytes(P.FRAME_BYTES), b"\xff" * P.FRAME_BYTES]
     up = P.gif_upload(frames, 80)
-    assert up.mode_first and up.fb_addr == P.FB_GIF and up.nframes == 2
+    assert up.mode_first and up.fb_addr == P.FB_GIF and up.nframes == 3   # + frame 0, never shown
     hdr = up.frames[1]
-    assert hdr[9] == 2 and int.from_bytes(hdr[14:16], "big") == 2 and hdr[16] == 80
+    assert hdr[9] == 2 and int.from_bytes(hdr[14:16], "big") == 3 and hdr[16] == 80
     assert hdr[17] == P.ERASE_SECTOR, "4 KB sector erase, not GCC's flaky 64 KB path"
     body = b"".join(up.frames[2:-1])
     assert body[:len(up.payload)] == up.payload and not any(body[len(up.payload):])
-    pos = 2 + 10 * 2
-    for i in range(2):
+    pos = 2 + 10 * 3
+    for i, frame in enumerate(frames[:1] + frames):
         end = struct.unpack_from("<I", up.payload, 2 + 10 * i)[0]
-        assert P.rle_decode_frame(up.payload[pos:end + 1]) == frames[i]
+        assert P.rle_decode_frame(up.payload[pos:end + 1]) == frame
         pos = end + 1
+    with pytest.raises(ValueError, match="at most"):
+        P.gif_upload([bytes(P.FRAME_BYTES)] * (P.GIF_MAX_PLAYED + 1), 80)
 
 
 def test_set_display_flags_and_interval():
@@ -172,8 +174,11 @@ def test_encoder_matches_gcc_ground_truth():
 def test_header_pause_covers_every_erase():
     assert P.erase_count(12 + P.FRAME_BYTES, P.ERASE_BLOCK) == 2        # GCC's static upload
     assert P.erase_count(127114, P.ERASE_SECTOR) == 32
-    assert P.header_pause(1000, P.ERASE_SECTOR) == P.PACE_HEADER         # small uploads: GCC timing
-    assert P.header_pause(127114, P.ERASE_SECTOR) >= 32 * 0.1
+    for size in (1000, 127114, 700_000, P.GIF_MAX_PAYLOAD):
+        units = P.erase_count(size, P.ERASE_SECTOR)
+        measured = 0.5 + 0.03 * units                       # LCD firmware 1.3, playback held
+        pause = P.header_pause(size, P.ERASE_SECTOR)
+        assert measured * 1.3 <= pause <= measured + P.DATA_TIMEOUT_SECONDS - 5
     assert P.still_upload(bytes(P.FRAME_BYTES)).frames[1][17] == P.ERASE_SECTOR
 
 
@@ -182,7 +187,7 @@ def test_stills_are_sent_as_two_frame_gifs():
     up = content.build(C.ContentConfig(type="text", text="hi"))
     assert up.kind == "gif" and up.mode == P.MODE_GIF
     assert up.nframes == 2, "a one-frame GIF leaves the panel on a garbled Loading screen"
-    assert len(up.frames) < 20, "RLE keeps a mostly-black still tiny"
+    assert len(up.payload) == P.GIF_MIN_PAYLOAD, "RLE keeps a mostly-black still under the padding"
 
 
 def test_text_wave_uses_the_panels_text_mode_like_gcc():

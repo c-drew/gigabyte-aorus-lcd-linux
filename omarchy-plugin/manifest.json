@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.c-drew.aorus-lcd",
+  "name": "AORUS LCD",
+  "version": "0.1.0",
+  "author": "c-drew",
+  "license": "MIT",
+  "description": "Control the Gigabyte AORUS LCD Edge View from the bar: the ttfx screensaver playlist, the GPU stats overlay, presets and power, through the local aorus-lcd service.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "AORUS LCD",
+    "description": "Screensaver playlist, stats overlay, presets and power for the GPU's side screen.",
+    "category": "Hardware",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "url": "http://127.0.0.1:5090"
+    },
+    "schema": [
+      {
+        "key": "url",
+        "type": "string",
+        "label": "aorus-lcd service URL",
+        "defaultValue": "http://127.0.0.1:5090",
+        "description": "Where the aorus-lcd service's web UI listens (loopback only)."
+      }
+    ]
+  }
+}

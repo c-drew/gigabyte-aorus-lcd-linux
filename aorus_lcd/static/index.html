@@ -89,6 +89,7 @@
            background: #1f1f25; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; transition: .2s; z-index: 10; max-width: 90vw; }
   #toast.show { opacity: 1; transform: translateX(-50%); }
   #toast.err { border-color: #ff5a5a; }
+  #jobtext.bad { color: #ff7a7a; }
   footer { grid-column: 1 / -1; display: flex; gap: 16px; justify-content: center; color: var(--muted); font-size: 12px; }
   footer a { color: var(--muted); }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -142,7 +143,7 @@
       <h2>Screen</h2>
       <div class="seg" id="types">
         <button data-type="logo">Logo</button><button data-type="image">Image</button><button data-type="gif">GIF</button>
-        <button data-type="text">Text</button><button data-type="builtin">Built-in</button>
+        <button data-type="text">Text</button><button data-type="ttfx">Screensaver</button><button data-type="builtin">Built-in</button>
       </div>
 
       <div data-for="logo image gif" class="field">
@@ -185,6 +186,53 @@
 
       <div data-for="image gif" class="field"><span>Fit</span>
         <div class="tags" id="fit"><button class="tag" data-v="contain">Whole picture</button><button class="tag" data-v="cover">Fill the screen</button></div></div>
+
+      <div data-for="ttfx" class="two">
+        <label class="field"><span>Animate</span>
+          <select id="ttfxSource"><option value="logo">The Omarchy logo</option><option value="mark">The Omarchy mark</option>
+            <option value="wordmark">My text, in the Omarchy logo's letters</option><option value="text">My text, in a font</option></select></label>
+        <label class="field" id="fontField"><span>Font</span><select id="ttfxFont"></select></label>
+      </div>
+      <div data-for="ttfx" class="field" id="textField"><span>Text <span id="textHint" class="muted"></span></span>
+        <textarea id="ttfxText" maxlength="8000" rows="2" placeholder="hello" style="font-family:monospace"></textarea></div>
+      <div data-for="ttfx" class="field"><span>Effects, in play order <span id="fxCount" class="muted"></span>
+          <a href="#" id="fxDefault" class="muted" style="float:right">curated set</a></span>
+        <div class="tags" id="fx"></div>
+        <p class="muted" style="margin:8px 0 0" id="fxNote">The Omarchy screensaver's ttfx effects, rendered ahead of time and stored on the panel, which then loops them on its own: no ongoing GPU or CPU cost.</p></div>
+      <div data-for="ttfx" class="two">
+        <label class="field"><span>Rotate <span id="rotateVal" class="muted"></span></span>
+          <select id="rotateMin"><option value="0">Off: one loop of all the effects</option>
+            <option value="15">One effect at a time, next every 15 min</option><option value="30">… every 30 min</option>
+            <option value="60">… every hour</option><option value="180">… every 3 hours</option>
+            <option value="720">… every 12 hours</option><option value="1440">… every day</option></select></label>
+        <div class="field"><span>Order</span>
+          <div class="row"><label class="toggle"><input type="checkbox" id="shuffle"> Shuffle</label>
+            <input type="text" id="seed" inputmode="numeric" style="width:90px" title="Seed: effects and shuffling are deterministic per seed"></div></div>
+      </div>
+      <p data-for="ttfx" class="muted" id="rotateHelp" style="margin:-4px 0 12px"></p>
+      <div data-for="ttfx" class="field hidden" id="ssStatus">
+        <div class="row" style="justify-content:space-between"><span id="ssNow" class="muted"></span>
+          <button id="ssNext">Next effect now</button></div></div>
+      <div data-for="ttfx" class="two">
+        <label class="field"><span>Frame rate</span>
+          <select id="fps"><option value="18">18 fps: smoothest (the panel's best)</option>
+            <option value="9">9 fps: half the data</option><option value="6">6 fps: a third</option>
+            <option value="3">3 fps: a sixth, choppy</option></select></label>
+        <label class="field"><span>Pause on the finished logo <span id="holdVal" class="muted"></span></span>
+          <input type="range" id="hold" min="0" max="5000" step="250"></label>
+      </div>
+      <div data-for="ttfx" class="two">
+        <label class="field" id="scaleField"><span>Text size</span>
+          <select id="textScale"><option value="0">Auto: as big as fits</option><option value="1">1x: tiny pixel font</option>
+            <option value="2">2x: pixel font</option><option value="3">3x</option><option value="4">4x</option>
+            <option value="5">5x</option><option value="6">6x</option><option value="7">7x</option><option value="8">8x: huge</option></select></label>
+        <div class="field"><span>Result</span><span id="renderInfo" class="muted">…</span></div>
+      </div>
+      <div data-for="ttfx" class="field"><span>Border <span class="muted">(px kept clear, if the panel's edges are hidden from where you sit)</span></span>
+        <div class="two"><label class="field"><span>Left <span id="bL" class="muted"></span></span><input type="range" id="borderL" min="0" max="36"></label>
+          <label class="field"><span>Right <span id="bR" class="muted"></span></span><input type="range" id="borderR" min="0" max="36"></label></div>
+        <div class="two"><label class="field"><span>Top <span id="bT" class="muted"></span></span><input type="range" id="borderT" min="0" max="40"></label>
+          <label class="field"><span>Bottom <span id="bB" class="muted"></span></span><input type="range" id="borderB" min="0" max="40"></label></div></div>
 
       <div data-for="builtin" class="field"><span>Gigabyte's built-in screens</span>
         <div class="tags" id="builtin"><button class="tag" data-v="0">Stats 1</button><button class="tag" data-v="1">Stats 2</button>
@@ -280,23 +328,85 @@ async function refresh() {
     .map(([k, v]) => `<span class="stat">${k} <strong>${v}</strong></span>`).join("") : "";
   renderPresets();
   renderJob();
+  renderScreensaver();
   return S;
 }
+function timeLeft(s) {
+  if (s == null) return "";
+  return s >= 90 ? ` · about ${Math.round(s / 60)} min left` : ` · about ${Math.max(5, Math.round(s / 5) * 5)} s left`;
+}
+// Uploads, in the foreground (Send) or the background (the next playlist
+// effect, written while the screen keeps playing), and their failures.
 function renderJob() {
-  const j = S.job, bar = $("progress");
-  const running = j.state === "running";
-  $("send").disabled = running;
-  bar.classList.toggle("hidden", !running);
-  bar.firstElementChild.style.width = j.total ? (100 * j.done / j.total) + "%" : "3%";
-  $("jobtext").textContent = running ? `Uploading ${j.done}/${j.total || "…"}` : j.state === "error" ? "Failed: " + j.error : "";
-  if (!running && polling) { clearInterval(polling); polling = null; if (j.state === "done") toast("On the panel"); if (j.state === "error") toast(j.error, true); }
+  const j = S.job, bg = (S.screensaver || {}).background || {}, bar = $("progress");
+  const running = j.state === "running", streaming = bg.phase === "uploading";
+  const pct = (d, t) => (t ? Math.round(100 * d / t) : 0);
+  const settling = S.settling_seconds || 0;
+  $("send").disabled = running || settling > 0;
+  bar.classList.toggle("hidden", !(running || streaming));
+  let text = "", bad = false;
+  if (running) {
+    bar.firstElementChild.style.width = j.total ? (100 * j.done / j.total) + "%" : "3%";
+    text = j.total ? `Uploading ${pct(j.done, j.total)}%${timeLeft(j.eta_seconds)} · the screen holds still until it is done`
+      : j.label.endsWith("rendering") ? "Rendering…" : "Starting: the panel erases flash first…";
+  } else if (streaming) {
+    bar.firstElementChild.style.width = bg.total ? (100 * bg.done / bg.total) + "%" : "3%";
+    text = bg.total
+      ? `Writing ${bg.effect}: ${pct(bg.done, bg.total)}%${timeLeft(bg.eta_seconds)}. The screen holds its last frame until it is written.`
+      : `Writing ${bg.effect}: the panel is erasing flash for it first…`;
+  } else if (settling) {
+    text = `The last upload failed; the panel is closing it (${settling} s), then it is written again.`;
+    bad = true;
+  } else if (j.state === "error") {
+    text = "Failed: " + j.error; bad = true;
+  } else if (bg.phase === "error") {
+    text = `The last background upload failed: ${bg.error}`; bad = true;
+  }
+  $("jobtext").textContent = text;
+  $("jobtext").classList.toggle("bad", bad);
+  if (!running && polling) {
+    clearInterval(polling); polling = null;
+    if (j.state === "done") toast(j.label === "playlist saved" ? "Playlist saved: it takes effect at the next swap" : "On the panel");
+    if (j.state === "error") toast(j.error, true);
+  }
 }
 function watchJob() { if (!polling) polling = setInterval(refresh, 500); }
+function ttfxFields() {
+  const src = $("ttfxSource").value, isText = src === "text";
+  $("textField").classList.toggle("hidden", content.type !== "ttfx" || !(isText || src === "wordmark"));
+  $("fontField").classList.toggle("hidden", !isText);
+  $("scaleField").classList.toggle("hidden", !isText);
+  $("textHint").textContent = src === "wordmark"
+    ? "(built like the Omarchy logo; letters, digits and punctuation, lines stay lines)" : "";
+}
+function renderInfo(header) {
+  let info = {};
+  try { info = JSON.parse(header || "{}"); } catch {}
+  if (!info.bytes) { $("renderInfo").textContent = ""; return; }
+  let text = `${(info.bytes / 1e6).toFixed(2)} MB, a ${info.seconds} s loop of ${info.included.join(", ")}`;
+  if (info.skipped.length) text += ` · left out (no room): ${info.skipped.join(", ")}`;
+  if (info.background_seconds) text += ` · each swap writes in the background for ~${Math.round(info.background_seconds / 60)} min`;
+  $("renderInfo").textContent = text;
+}
+function renderScreensaver() {
+  const ss = S.screensaver || {}, bg = ss.background || {}, box = $("ssStatus");
+  box.classList.toggle("hidden", !(content && content.type === "ttfx" && ss.rotating));
+  if (!ss.rotating) return;
+  const mins = Math.max(0, Math.round((ss.due_at - Date.now() / 1000) / 60));
+  let text = `Now: ${ss.effect || "?"} · next: ${ss.next}`;
+  if (bg.phase === "uploading") text += ` · being written now (see above)`;
+  else if (bg.phase === "error") text += ` · the last swap failed`;
+  else text += mins ? ` in ${mins} min` : " shortly";
+  if (ss.wear) text += ` · flash wear ${ss.wear.used_percent}%`;
+  $("ssNow").textContent = text;
+  $("ssNext").disabled = bg.phase === "uploading" || bg.phase === "rendering";
+}
 
 // ---- content ------------------------------------------------------------------------
 function showType() {
   document.querySelectorAll("#types button").forEach((b) => b.classList.toggle("active", b.dataset.type === content.type));
   document.querySelectorAll("[data-for]").forEach((el) => el.classList.toggle("hidden", !el.dataset.for.split(" ").includes(content.type)));
+  if (content.type === "ttfx") ttfxFields();
   $("dropHint").textContent = HINTS[content.type] || "";
   $("fileName").textContent = content.source ? (fileNames[content.source] || content.source.split("/").pop()) : "";
   $("file").accept = content.type === "gif" ? ".gif" : content.type === "logo" ? ".svg,.png,.webp" : "image/*";
@@ -309,24 +419,53 @@ function fillContent() {
   $("anchor").value = content.anchor; $("offx").value = content.offset[0]; $("offy").value = content.offset[1];
   $("pulse").checked = content.animate === "pulse";
   $("wave").checked = content.effect === "wave";
-  labels(); showType();
+  $("fps").value = String(content.fps); $("hold").value = content.hold_ms; $("textScale").value = String(content.text_scale || 0);
+  $("shuffle").checked = content.shuffle; $("seed").value = content.seed; $("ttfxText").value = content.ttfx_text || "";
+  $("ttfxSource").value = content.ttfx_source || (content.ttfx_text ? "text" : "logo");
+  const fonts = (S.ttfx && S.ttfx.fonts) || [];
+  $("ttfxFont").innerHTML = `<option value="">System font</option>` + fonts.map((f) => `<option value="${f.replace(/"/g, "")}">${f.replace(/[<>&]/g, "")}</option>`).join("");
+  $("ttfxFont").value = content.ttfx_font || "";
+  ttfxFields();
+  $("rotateMin").value = String(content.rotate_minutes || 0);
+  const b = content.border || [0, 0, 0, 0];
+  [$("borderL").value, $("borderT").value, $("borderR").value, $("borderB").value] = b;
+  fillEffects(); labels(); showType();
 }
 function labels() {
   $("scaleVal").textContent = Math.round(content.scale * 100) + "%"; $("sizeVal").textContent = content.size + " px";
   $("rotVal").textContent = overlay.rotate_seconds + " s"; $("pxVal").textContent = overlay.data_position[0];
   $("pyVal").textContent = overlay.data_position[1]; $("brVal").textContent = lighting.brightness; $("spVal").textContent = lighting.speed;
+  $("holdVal").textContent = (content.hold_ms / 1000).toFixed(2).replace(/0$/, "") + " s";
+  const rot = content.rotate_minutes || 0, b = content.border || [0, 0, 0, 0];
+  $("rotateVal").textContent = rot ? `· flash lasts ~${Math.round(100000 * 2 * rot / 525600)} years at this pace` : "";
+  $("rotateHelp").textContent = rot
+    ? `Each effect gets its own ~14 s loop. The panel shows one; every ${rot >= 60 ? rot / 60 + " h" : rot + " min"} the next is written in the background while the current one keeps playing, then swapped in.`
+    : "All the chosen effects play back to back in one loop, as many as fit the panel (at most 254 frames, 1.9 MB); the rest are left out. For more, turn on rotation.";
+  [$("bL").textContent, $("bT").textContent, $("bR").textContent, $("bB").textContent] = b.map((v) => v + " px");
+}
+function chosenEffects() { return content.effects.length ? content.effects : (S.ttfx.default || []); }
+function fillEffects() {
+  const t = S.ttfx || {effects: []}, chosen = chosenEffects();
+  $("fx").innerHTML = t.effects.map((e) => {
+    const i = chosen.indexOf(e);
+    return `<button class="tag ${i >= 0 ? "on" : ""}" data-e="${e}">${i >= 0 ? `<b>${i + 1}</b> ` : ""}${e}</button>`;
+  }).join("") || `<span class="muted">${t.error || "ttfx not found"}</span>`;
+  $("fxCount").textContent = t.version ? `· ttfx ${t.version}` : "";
 }
 const preview = debounce(async () => {
   const ph = $("placeholder"), img = $("preview");
   if (content.type === "builtin") { img.classList.add("hidden"); ph.classList.remove("hidden"); ph.textContent = "Gigabyte's built-in screen"; $("estimate").textContent = ""; return; }
   if (["logo", "image", "gif"].includes(content.type) && !content.source) { img.classList.add("hidden"); ph.classList.remove("hidden"); ph.textContent = "Choose a file"; $("estimate").textContent = ""; return; }
+  if (content.type === "ttfx") $("estimate").textContent = "rendering…";
   try {
     const r = await api("/api/preview", {content});
     img.src = URL.createObjectURL(await r.blob());
     img.classList.remove("hidden"); ph.classList.add("hidden");
-    $("estimate").textContent = `upload ≈ ${Math.round(+r.headers.get("X-Estimate-Seconds"))} s`;
+    const secs = +r.headers.get("X-Estimate-Seconds");
+    $("estimate").textContent = secs > 90 ? `upload ≈ ${Math.round(secs / 60)} min` : `upload ≈ ${Math.round(secs)} s`;
+    renderInfo(r.headers.get("X-Render-Info"));
   } catch (e) { toast(e.message, true); }
-}, 250);
+}, 400);
 function changed() { labels(); showType(); preview(); if (content.type === "logo" || content.type === "text") setAccent(hex(content.color)); }
 
 async function upload(file) {
@@ -390,6 +529,23 @@ function wire() {
   $("wave").onchange = (e) => { content.effect = e.target.checked ? "wave" : "none"; changed(); };
   $("fit").onclick = (e) => { if (e.target.dataset.v) { content.fit = e.target.dataset.v; changed(); } };
   $("builtin").onclick = (e) => { if (e.target.dataset.v) { content.builtin_mode = +e.target.dataset.v; changed(); } };
+  $("fx").onclick = (e) => { const el = e.target.closest("[data-e]"); if (!el) return;
+    const fx = [...chosenEffects()], i = fx.indexOf(el.dataset.e);
+    if (i >= 0) fx.splice(i, 1); else fx.push(el.dataset.e);
+    if (!fx.length) return toast("Pick at least one effect", true);
+    content.effects = fx; fillEffects(); changed(); };
+  $("fxDefault").onclick = (e) => { e.preventDefault(); content.effects = []; fillEffects(); changed(); };
+  for (const [id, key] of [["fps", "fps"], ["hold", "hold_ms"], ["textScale", "text_scale"]])
+    $(id).addEventListener("input", (e) => { content[key] = +e.target.value; labels(); preview(); });
+  $("shuffle").onchange = (e) => { content.shuffle = e.target.checked; changed(); };
+  $("rotateMin").onchange = (e) => { content.rotate_minutes = +e.target.value; changed(); };
+  ["borderL", "borderT", "borderR", "borderB"].forEach((id, i) => $(id).addEventListener("input", (e) => {
+    const b = [...(content.border || [0, 0, 0, 0])]; b[i] = +e.target.value; content.border = b; changed(); }));
+  $("ssNext").onclick = async () => { try { await api("/api/screensaver", {action: "next"}); toast("The next effect is being written; it swaps in when done"); refresh(); } catch (e) { toast(e.message, true); } };
+  $("seed").oninput = (e) => { const v = parseInt(e.target.value, 10); if (v >= 0) { content.seed = v; changed(); } };
+  $("ttfxText").addEventListener("input", (e) => { content.ttfx_text = e.target.value; changed(); });
+  $("ttfxSource").onchange = (e) => { content.ttfx_source = e.target.value; ttfxFields(); changed(); };
+  $("ttfxFont").onchange = (e) => { content.ttfx_font = e.target.value; changed(); };
   const drop = $("drop");
   drop.onclick = () => $("file").click();
   drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") $("file").click(); };

@@ -13,12 +13,13 @@ class PanelConfig:
     transport: str = "nvrm"          # nvrm | i2c-dev
     speed_khz: int = 400
     gpu: str = ""                    # PCI address; empty = the only Gigabyte NVIDIA card
-    chunk_delay: float = 0.01        # seconds between 256-byte upload chunks
+    chunk_delay: float = 0.0         # seconds between 256-byte upload chunks (0 = back to back;
+                                     # an upload that loses a chunk is repeated at 0.01)
 
 
 @dataclass
 class ContentConfig:
-    type: str = "none"               # logo | image | gif | text | builtin | none
+    type: str = "none"               # logo | image | gif | text | ttfx | builtin | none
     source: str = ""                 # file for logo/image/gif
     text: str = ""
     color: str = "#ff0000"           # logo/text colour
@@ -34,6 +35,21 @@ class ContentConfig:
     frames: int = 10                 # pulse: frame count
     frame_ms: int = 80               # pulse: delay per frame
     builtin_mode: int = 0            # builtin: 0-2 stat screens, 6 chibi clock
+    ttfx_source: str = ""            # ttfx: logo | mark | wordmark (your text in the logo's letters)
+                                     #       | text; empty = text if ttfx_text is set, else logo
+    ttfx_text: str = ""              # ttfx: the text for wordmark/text
+    ttfx_font: str = ""              # ttfx: font family for big plain text; empty = system monospace
+    effects: list = field(default_factory=list)   # ttfx: effects in play order; empty = curated set
+    rotate_minutes: int = 0          # ttfx: 0 = one loop of the effects; >= 15 = one effect at a
+                                     #       time, the next swapped in every N minutes (no Loading)
+    border: list = field(default_factory=lambda: [0, 0, 0, 0])   # ttfx: px kept clear (l, t, r, b)
+    fps: int = 18                    # ttfx: 18, 9, 6 or 3 (the panel draws a whole frame in ~55 ms)
+    hold_ms: int = 1500              # ttfx: pause on each finished effect
+    text_scale: int = 0              # ttfx: text size 1..8 (x 4x8-px cells); 0 = the biggest that fits
+    seed: int = 1                    # ttfx: effects are deterministic per seed
+    shuffle: bool = False            # ttfx: play the effects in a seeded random order
+    budget_mb: float = 1.9           # ttfx (CLI only): size cap; the service always uses the panel's
+    ttfx: str = ""                   # ttfx: binary path; empty = ttfx on PATH
 
 
 @dataclass
@@ -127,7 +143,7 @@ def load(path=DEFAULT_PATH):
 def validate(cfg):
     if cfg.panel.transport not in ("nvrm", "i2c-dev"):
         raise ValueError("panel.transport must be nvrm or i2c-dev")
-    if cfg.content.type not in ("logo", "image", "gif", "text", "builtin", "none"):
+    if cfg.content.type not in ("logo", "image", "gif", "text", "ttfx", "builtin", "none"):
         raise ValueError(f"content.type {cfg.content.type!r} is not supported")
     if cfg.content.type in ("logo", "image", "gif") and not cfg.content.source:
         raise ValueError(f"content.type = {cfg.content.type!r} needs content.source")
@@ -146,6 +162,31 @@ def validate(cfg):
         raise ValueError("content.scale must be in (0, 1]")
     if len(cfg.content.text) > 200:
         raise ValueError("content.text is limited to 200 characters")
+    if len(cfg.content.ttfx_text) > 8000:
+        raise ValueError("content.ttfx_text is limited to 8000 characters")
+    if cfg.content.type == "ttfx":
+        from .protocol import GIF_MAX_PAYLOAD
+        if not 1 <= cfg.content.fps <= 18:
+            raise ValueError("content.fps must be 1..18: the panel draws a whole frame in ~55 ms")
+        if cfg.content.ttfx_source not in ("", "logo", "mark", "wordmark", "text"):
+            raise ValueError("content.ttfx_source must be logo, mark, wordmark or text")
+        if len(cfg.content.ttfx_font) > 200:
+            raise ValueError("content.ttfx_font is too long")
+        if not 0 <= cfg.content.text_scale <= 8:
+            raise ValueError("content.text_scale must be 0 (fit) or 1..8")
+        if not 0 <= cfg.content.hold_ms <= 10000:
+            raise ValueError("content.hold_ms must be 0..10000")
+        if not 0.1 <= cfg.content.budget_mb <= GIF_MAX_PAYLOAD / 1e6:
+            raise ValueError(f"content.budget_mb must be 0.1..{GIF_MAX_PAYLOAD / 1e6:.1f}")
+        if not all(isinstance(e, str) and e.isalnum() for e in cfg.content.effects):
+            raise ValueError("content.effects must be ttfx effect names")
+        from .playlist import MIN_ROTATE_MINUTES
+        if cfg.content.rotate_minutes and not MIN_ROTATE_MINUTES <= cfg.content.rotate_minutes <= 7 * 24 * 60:
+            raise ValueError(f"content.rotate_minutes must be 0 (no rotation) or {MIN_ROTATE_MINUTES}.."
+                             f"{7 * 24 * 60}: every switch wears the panel's flash")
+        b = cfg.content.border
+        if not (isinstance(b, list) and len(b) == 4 and all(isinstance(v, int) and 0 <= v <= 40 for v in b)):
+            raise ValueError("content.border must be 4 numbers of px (left, top, right, bottom), 0..40")
     from .lighting import MODES
     from .render import parse_color
     if cfg.lighting.mode not in MODES:

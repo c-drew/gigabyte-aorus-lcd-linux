@@ -9,6 +9,8 @@ ExecStart=/opt/aorus-lcd/bin/aorus-lcd daemon --config /etc/aorus-lcd/config.tom
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
+# Stopping waits for an upload to close (up to 80 s while the flash erases).
+TimeoutStopSec=100
 # /dev/nvidiactl and /dev/nvidia* are world-accessible; no root needed.
 DynamicUser=yes
 StateDirectory=aorus-lcd
