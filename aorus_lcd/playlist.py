@@ -8,7 +8,12 @@ Every switch erases a bank of the panel's GIF flash, which is rated for about
 100,000 erases per sector (typical SPI NOR). With two banks taking turns,
 rotating every N minutes lasts 100,000 x 2N minutes: every 15 minutes is ~6
 years, hourly ~23. Hence the 15-minute floor, and the wear count kept here.
+
+A swap writes for about 75 s, 256 bytes at a time, and each write holds the
+NVIDIA driver for ~6 ms: the desktop and games stutter meanwhile. With
+rotate_on_boot the swap happens only right after boot, never mid-session.
 """
+import functools
 import random
 import time
 
@@ -16,6 +21,16 @@ from . import protocol as P
 
 MIN_ROTATE_MINUTES = 15
 RATED_ERASES = 100_000
+
+
+@functools.cache
+def boot_time():
+    """When this boot started (unix time)."""
+    with open("/proc/stat") as f:
+        for line in f:
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    raise RuntimeError("/proc/stat has no btime")
 
 
 def effects_in_order(c, default):
@@ -45,8 +60,14 @@ class Rotation:
     def next_index(self, order):
         return (self.state["index"] + 1) % len(order)
 
-    def due_at(self, c):
-        return self.state["switched_at"] + max(MIN_ROTATE_MINUTES, c.rotate_minutes) * 60
+    def due_at(self, c, booted_at=None):
+        """When the next swap is due; None when it waits for the next boot."""
+        due = self.state["switched_at"] + max(MIN_ROTATE_MINUTES, c.rotate_minutes) * 60
+        if not c.rotate_on_boot:
+            return due
+        booted_at = boot_time() if booted_at is None else booted_at
+        # Swapped this boot, or too shortly before it (a quick reboot): next boot.
+        return booted_at if due <= booted_at else None
 
     def switched(self, index, effect, now=None):
         self.state.update(index=index, effect=effect, switched_at=now or time.time())

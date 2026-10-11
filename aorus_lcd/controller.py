@@ -357,7 +357,8 @@ class Controller:
             log.warning("the last upload did not finish; uploading the playlist again")
             self._start_upload(self.cfg, self.state.get("overrides", {}))
             return
-        if now < self.rotation.due_at(c) - self.ROTATE_LEAD:
+        due = self.rotation.due_at(c)
+        if due is None or now < due - self.ROTATE_LEAD:
             return
         self._bg_cancel.clear()
         self._bg_thread = threading.Thread(target=self._rotate_job, args=(c,), daemon=True)
@@ -381,7 +382,10 @@ class Controller:
         bank = None
         try:
             upload = CT.animation(c, index).upload()
-            self.bg.update(phase="waiting", starts_at=self.rotation.due_at(c) - playlist.estimate_seconds(upload))
+            due = self.rotation.due_at(c)
+            if due is None:
+                raise UploadCancelled("not due before the next boot")
+            self.bg.update(phase="waiting", starts_at=due - playlist.estimate_seconds(upload))
             while clock() < self.bg["starts_at"]:
                 if self._bg_cancel.wait(min(5.0, max(0.1, self.bg["starts_at"] - clock()))):
                     raise UploadCancelled("rotation cancelled")
@@ -457,7 +461,8 @@ class Controller:
         if c.type == "ttfx" and c.rotate_minutes:
             order = CT.playlist_order(c)
             out.update(order=order, effect=self.rotation.state.get("effect", ""),
-                       next=order[self.rotation.next_index(order)], due_at=self.rotation.due_at(c))
+                       next=order[self.rotation.next_index(order)], due_at=self.rotation.due_at(c),
+                       on_boot=c.rotate_on_boot)
         return out
 
     def _ttfx_info(self):

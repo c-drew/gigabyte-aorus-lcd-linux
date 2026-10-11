@@ -204,7 +204,8 @@
           <select id="rotateMin"><option value="0">Off: one loop of all the effects</option>
             <option value="15">One effect at a time, next every 15 min</option><option value="30">… every 30 min</option>
             <option value="60">… every hour</option><option value="180">… every 3 hours</option>
-            <option value="720">… every 12 hours</option><option value="1440">… every day</option></select></label>
+            <option value="720">… every 12 hours</option><option value="1440">… every day</option>
+            <option value="boot">… once per boot, right after it</option></select></label>
         <div class="field"><span>Order</span>
           <div class="row"><label class="toggle"><input type="checkbox" id="shuffle"> Shuffle</label>
             <input type="text" id="seed" inputmode="numeric" style="width:90px" title="Seed: effects and shuffling are deterministic per seed"></div></div>
@@ -396,6 +397,7 @@ function renderScreensaver() {
   let text = `Now: ${ss.effect || "?"} · next: ${ss.next}`;
   if (bg.phase === "uploading") text += ` · being written now (see above)`;
   else if (bg.phase === "error") text += ` · the last swap failed`;
+  else if (ss.due_at == null) text += " at the next boot";
   else text += mins ? ` in ${mins} min` : " shortly";
   if (ss.wear) text += ` · flash wear ${ss.wear.used_percent}%`;
   $("ssNow").textContent = text;
@@ -426,7 +428,7 @@ function fillContent() {
   $("ttfxFont").innerHTML = `<option value="">System font</option>` + fonts.map((f) => `<option value="${f.replace(/"/g, "")}">${f.replace(/[<>&]/g, "")}</option>`).join("");
   $("ttfxFont").value = content.ttfx_font || "";
   ttfxFields();
-  $("rotateMin").value = String(content.rotate_minutes || 0);
+  $("rotateMin").value = content.rotate_on_boot ? "boot" : String(content.rotate_minutes || 0);
   const b = content.border || [0, 0, 0, 0];
   [$("borderL").value, $("borderT").value, $("borderR").value, $("borderB").value] = b;
   fillEffects(); labels(); showType();
@@ -437,9 +439,11 @@ function labels() {
   $("pyVal").textContent = overlay.data_position[1]; $("brVal").textContent = lighting.brightness; $("spVal").textContent = lighting.speed;
   $("holdVal").textContent = (content.hold_ms / 1000).toFixed(2).replace(/0$/, "") + " s";
   const rot = content.rotate_minutes || 0, b = content.border || [0, 0, 0, 0];
-  $("rotateVal").textContent = rot ? `· flash lasts ~${Math.round(100000 * 2 * rot / 525600)} years at this pace` : "";
-  $("rotateHelp").textContent = rot
-    ? `Each effect gets its own ~14 s loop. The panel shows one; every ${rot >= 60 ? rot / 60 + " h" : rot + " min"} the next is written in the background while the current one keeps playing, then swapped in.`
+  $("rotateVal").textContent = rot && !content.rotate_on_boot ? `· flash lasts ~${Math.round(100000 * 2 * rot / 525600)} years at this pace` : "";
+  $("rotateHelp").textContent = content.rotate_on_boot
+    ? "Each effect gets its own ~14 s loop. The panel shows one; right after each boot the next is written in the background, then swapped in. Writing takes ~75 s and the desktop and games may stutter meanwhile, so it never happens mid-session."
+    : rot
+    ? `Each effect gets its own ~14 s loop. The panel shows one; every ${rot >= 60 ? rot / 60 + " h" : rot + " min"} the next is written in the background while the current one keeps playing, then swapped in. Writing takes ~75 s and the desktop and games may stutter meanwhile.`
     : "All the chosen effects play back to back in one loop, as many as fit the panel (at most 254 frames, 1.9 MB); the rest are left out. For more, turn on rotation.";
   [$("bL").textContent, $("bT").textContent, $("bR").textContent, $("bB").textContent] = b.map((v) => v + " px");
 }
@@ -538,7 +542,11 @@ function wire() {
   for (const [id, key] of [["fps", "fps"], ["hold", "hold_ms"], ["textScale", "text_scale"]])
     $(id).addEventListener("input", (e) => { content[key] = +e.target.value; labels(); preview(); });
   $("shuffle").onchange = (e) => { content.shuffle = e.target.checked; changed(); };
-  $("rotateMin").onchange = (e) => { content.rotate_minutes = +e.target.value; changed(); };
+  $("rotateMin").onchange = (e) => {
+    const boot = e.target.value === "boot";
+    content.rotate_on_boot = boot;
+    content.rotate_minutes = boot ? Math.max(15, content.rotate_minutes || 0) : +e.target.value;
+    changed(); };
   ["borderL", "borderT", "borderR", "borderB"].forEach((id, i) => $(id).addEventListener("input", (e) => {
     const b = [...(content.border || [0, 0, 0, 0])]; b[i] = +e.target.value; content.border = b; changed(); }));
   $("ssNext").onclick = async () => { try { await api("/api/screensaver", {action: "next"}); toast("The next effect is being written; it swaps in when done"); refresh(); } catch (e) { toast(e.message, true); } };

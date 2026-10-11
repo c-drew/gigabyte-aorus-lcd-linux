@@ -78,6 +78,10 @@ CPU, GPU or bus cost.
   playlist loop is at most 3 MB. Every swap erases one bank of the panel's flash, which is
   rated for ~100,000 erases: hourly swaps last ~23 years, every 15 minutes ~6. The web UI
   shows the wear so far.
+- **Once per boot** (`rotate_on_boot = true`, with `rotate_minutes >= 15`): the playlist swaps
+  only right after boot, at most once per boot and no sooner than `rotate_minutes` after the
+  last swap. A swap writes for about 75 s, and each 256-byte write holds the NVIDIA driver
+  for ~6 ms, so the desktop and games stutter meanwhile; timed swaps hit that mid-session.
 - **Border**: pixels kept clear on each side, if the panel's bezel hides its edges from where
   you sit.
 

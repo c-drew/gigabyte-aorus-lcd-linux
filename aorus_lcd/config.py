@@ -42,6 +42,9 @@ class ContentConfig:
     effects: list = field(default_factory=list)   # ttfx: effects in play order; empty = curated set
     rotate_minutes: int = 0          # ttfx: 0 = one loop of the effects; >= 15 = one effect at a
                                      #       time, the next swapped in every N minutes (no Loading)
+    rotate_on_boot: bool = False     # ttfx playlist: swap only right after boot, at most once per
+                                     #       boot and >= rotate_minutes after the last swap (a swap
+                                     #       holds the NVIDIA driver for ~75 s: desktop and games stutter)
     border: list = field(default_factory=lambda: [0, 0, 0, 0])   # ttfx: px kept clear (l, t, r, b)
     fps: int = 18                    # ttfx: 18, 9, 6 or 3 (the panel draws a whole frame in ~55 ms)
     hold_ms: int = 1500              # ttfx: pause on each finished effect
@@ -184,6 +187,8 @@ def validate(cfg):
         if cfg.content.rotate_minutes and not MIN_ROTATE_MINUTES <= cfg.content.rotate_minutes <= 7 * 24 * 60:
             raise ValueError(f"content.rotate_minutes must be 0 (no rotation) or {MIN_ROTATE_MINUTES}.."
                              f"{7 * 24 * 60}: every switch wears the panel's flash")
+        if cfg.content.rotate_on_boot and not cfg.content.rotate_minutes:
+            raise ValueError(f"content.rotate_on_boot needs a playlist: rotate_minutes >= {MIN_ROTATE_MINUTES}")
         b = cfg.content.border
         if not (isinstance(b, list) and len(b) == 4 and all(isinstance(v, int) and 0 <= v <= 40 for v in b)):
             raise ValueError("content.border must be 4 numbers of px (left, top, right, bottom), 0..40")

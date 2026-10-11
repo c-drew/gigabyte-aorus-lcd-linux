@@ -241,6 +241,45 @@ def test_editing_the_playlist_does_not_upload(tmp_path, fake_ttfx):
     assert len(bus.lcd) > writes
 
 
+def test_boot_rotation_swaps_once_per_boot():
+    from aorus_lcd import playlist
+    c = C.parse({"content": {"type": "ttfx", "rotate_minutes": 15, "rotate_on_boot": True}}).content
+    r = playlist.Rotation({})
+    boot = 1_000_000.0
+    r.state["switched_at"] = boot - 3600                           # swapped during the last boot
+    assert r.due_at(c, booted_at=boot) == boot
+    r.switched(1, "fx", now=boot + 120)                            # swapped this boot
+    assert r.due_at(c, booted_at=boot) is None
+    assert r.due_at(c, booted_at=boot + 7200) == boot + 7200
+    r.state["switched_at"] = boot - 60                             # a quick reboot: skipped
+    assert r.due_at(c, booted_at=boot) is None
+    with pytest.raises(ValueError, match="rotate_on_boot"):
+        C.parse({"content": {"type": "ttfx", "rotate_on_boot": True}})
+
+
+def test_boot_rotation_waits_for_the_next_boot(tmp_path, fake_ttfx, monkeypatch):
+    from aorus_lcd import playlist
+    ctl, bus = make(tmp_path)
+    ctl.start_content(_playlist(tmp_path, fake_ttfx))
+    _wait_done(ctl)
+    writes = len(bus.lcd)
+    ctl.start_content(_playlist(tmp_path, fake_ttfx, rotate_on_boot=True))
+    assert ctl.job["label"] == "playlist saved" and len(bus.lcd) == writes
+    booted = ctl.rotation.state["switched_at"] - 3600              # it swapped since this boot
+    monkeypatch.setattr(playlist, "boot_time", lambda: booted)
+    ctl._maybe_rotate()
+    assert ctl._bg_thread is None and len(bus.lcd) == writes
+    status = ctl.status()["screensaver"]
+    assert status["on_boot"] and status["due_at"] is None
+    ctl.rotation.state["switched_at"] = time.time() - 3600         # then the PC restarts
+    monkeypatch.setattr(playlist, "boot_time", lambda: time.time() - 60)
+    ctl._maybe_rotate()
+    ctl._bg_thread.join(20)
+    assert ctl.bg["phase"] == "idle", ctl.bg
+    assert len(bus.lcd) > writes and ctl.rotation.state["switched_at"] > time.time() - 60
+    assert ctl.status()["screensaver"]["due_at"] is None           # once per boot
+
+
 def test_changes_during_a_background_upload_wait_for_it(tmp_path):
     ctl, bus = make(tmp_path)
     ctl.bg["phase"] = "uploading"                                  # as if a rotation were streaming
